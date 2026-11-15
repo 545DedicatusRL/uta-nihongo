@@ -475,6 +475,7 @@ function setMode(mode) {
   app.classList.toggle('by-char', S.mode === 'dict' && prefs.dictChar);
   $('#btn-dict').classList.toggle('on', S.mode === 'dict');
   $('#btn-edit').classList.toggle('on', S.mode === 'edit');
+  $('#btn-edit').setAttribute('aria-pressed', S.mode === 'edit');
   $('#dictbar').hidden = S.mode !== 'dict';
   $('#reading-pop').hidden = true;
   tip.hidden = true;
