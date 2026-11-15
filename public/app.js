@@ -758,6 +758,7 @@ async function openSettings() {
   $('#set-lang').value = prefs.meaningLang;
   $('#set-levels').innerHTML = ['N5', 'N4', 'N3', 'N2', 'N1', 'x'].map((k) => `<label class="chk"><input type="checkbox" data-lv="${k}" ${prefs.levels[k] !== false ? 'checked' : ''}> ${k === 'x' ? '未分级' : k}</label>`).join(' ');
   $('#set-ai-state').textContent = S.song?.ai ? '当前歌曲已有 AI 讲解' : '';
+  api.get('/api/info').then((i) => { $('#about-version').textContent = `版本 ${i.version || '未知'}　程序位置 ${i.root}`; }).catch(() => {});
   try {
     const s = await api.get('/api/settings');
     $('#set-model').value = s.model;

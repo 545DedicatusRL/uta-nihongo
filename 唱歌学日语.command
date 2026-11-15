@@ -15,11 +15,22 @@ open_ui() {
     open "$URL"
   fi
 }
-# 已经在运行：只打开界面
-if curl -s -m 2 -o /dev/null "$URL/api/settings"; then
-  echo "唱歌学日语 已在运行，直接打开界面。"
-  open_ui
-  exit 0
+HERE="$(pwd -P)"
+# 端口上已经有「唱歌学日语」在运行
+if curl -s -m 2 "$URL/api/settings" | grep -q '"hasKey"'; then
+  if curl -s -m 2 "$URL/api/info" | grep -qF "\"root\":\"$HERE\""; then
+    # 就是这一份：只打开界面
+    echo "唱歌学日语 已在运行，直接打开界面。"
+    open_ui
+    exit 0
+  fi
+  # 是另一份（别的文件夹里的副本或旧版）：停掉它，换成这一份
+  echo "检测到另一份「唱歌学日语」正在运行（可能是旧版），先停止它，再启动这一份…"
+  lsof -tiTCP:"$PORT" -sTCP:LISTEN | xargs kill 2>/dev/null
+  for i in {1..25}; do
+    lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null || break
+    sleep 0.2
+  done
 fi
 ( sleep 1.5; open_ui ) &
 PORT="$PORT" node server/index.js

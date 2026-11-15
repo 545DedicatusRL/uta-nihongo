@@ -3,6 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   ROOT, getSettings, saveSettings, getSongMeta, saveSongMeta,
   getUserDict, saveUserDict, getVocab, saveVocab,
@@ -14,6 +15,16 @@ import { ensureDesktopShortcut } from './shortcut.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
+
+// 版本信息：电脑上可能有不止一份程序，界面和启动脚本靠它分辨正在运行的是哪一份
+function readVersion() {
+  try {
+    return execFileSync('git', ['-C', ROOT, 'log', '-1', '--format=%h · %cs'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    try { return 'v' + JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch { return ''; }
+  }
+}
+const VERSION = readVersion();
 const PUBLIC = path.join(ROOT, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
 
@@ -206,6 +217,7 @@ const routes = {
     res.end('﻿' + rows.join('\n'));
   },
 
+  'GET /api/info': (req, res) => send(res, 200, { root: ROOT, version: VERSION }),
   'GET /api/settings': (req, res) => {
     const s = getSettings();
     send(res, 200, { model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY });
