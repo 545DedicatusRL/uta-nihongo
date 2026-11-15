@@ -193,7 +193,9 @@ function renderFocus() {
   const i = S.active;
   const line = S.lines[i];
   const plain = (l) => (l && !l.gap ? esc(l.text) : '');
-  $('#f-prev').innerHTML = plain(S.lines[i - 1]);
+  const prev = S.lines[i - 1];
+  $('#f-prev').innerHTML = plain(prev);
+  $('#f-prev').dataset.i = prev && !prev.gap ? i - 1 : '';
   const next = S.lines[i < 0 ? 0 : i + 1];
   $('#f-next').innerHTML = plain(next);
   $('#f-next').dataset.i = next ? S.lines.indexOf(next) : '';
@@ -435,8 +437,8 @@ document.addEventListener('click', (e) => {
   const inFocus = e.target.closest('#f-cur');
   if (S.mode === 'dict' && (lineEl || inFocus)) return dictClick(e);
   if (S.mode === 'edit' && (lineEl || inFocus || e.target.closest('#f-ann'))) return editClick(e);
-  const next = e.target.closest('#f-next');
-  const i = lineEl ? +lineEl.dataset.i : next && next.dataset.i !== '' ? +next.dataset.i : -1;
+  const near = e.target.closest('#f-prev, #f-next'); // 大字视图里的上一句 / 下一句
+  const i = lineEl ? +lineEl.dataset.i : near && near.dataset.i !== '' ? +near.dataset.i : -1;
   const line = S.lines[i];
   if (!line || line.gap) return;
   if (S.tapAlign) {
