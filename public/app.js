@@ -255,8 +255,6 @@ for (const ev of ['wheel', 'touchmove']) {
 
 function frame() {
   requestAnimationFrame(frame);
-// 调试入口：地址加 ?debug 后可在控制台用 __uta.onState(...) 模拟播放状态
-if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs }; }
   const pos = now();
   const dur = S.track?.duration || 0;
   if (!S.dragging) {
@@ -373,7 +371,7 @@ function annotationsFor(line) {
 }
 function chipHTML(a) {
   const multi = !a.off && a.senses?.length > 1; // 多义词：修改模式下悬停可展开全部义项来挑
-  return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">+${a.senses.length - 1}</span>` : ''}</span>`;
+  return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">+${a.senses.filter((x) => x !== a.pick).length}</span>` : ''}</span>`;
 }
 function paintAnnotations() {
   const line = S.lines[S.active];
@@ -477,7 +475,6 @@ function setMode(mode) {
   app.classList.toggle('by-char', S.mode === 'dict' && prefs.dictChar);
   $('#btn-dict').classList.toggle('on', S.mode === 'dict');
   $('#btn-edit').classList.toggle('on', S.mode === 'edit');
-  $('#mode-chip').hidden = S.mode !== 'edit';
   $('#dictbar').hidden = S.mode !== 'dict';
   $('#reading-pop').hidden = true;
   tip.hidden = true;
@@ -614,7 +611,7 @@ $('#db-pause').addEventListener('change', (e) => { prefs.dictPause = e.target.ch
 // ---------------- 修改读音 ----------------
 let editing = null;
 // 修改模式下，鼠标停在多义词的标注上：其他义项以同款小卡叠在它下面，
-// 点其中一张就和当前这张互换位置（这首歌里固定用它）。
+// 点其中一张就换上它（这首歌里固定用它），原来那张弹出后排到最下面。
 const sensePop = $('#sense-pop');
 const sense = { ann: null, box: null, order: [], timer: 0, busy: false };
 function hideSensePop() { clearTimeout(sense.timer); sensePop.hidden = true; sense.ann = null; }
@@ -652,6 +649,20 @@ document.addEventListener('mouseover', (e) => {
     sense.timer = setTimeout(hideSensePop, 300); // 留一点时间把鼠标移到卡片上
   }
 });
+// 换义项的动画用的替身：歌词区有裁切和层级限制，所以在最上层放一张一模一样的卡来飞
+function ghostChip(el, rect, hostClass) {
+  const host = document.createElement('div');
+  host.className = `edit-mode ${hostClass}`; // 沿用原容器的类名，卡片样式才一致
+  host.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;margin:0;padding:0;min-height:0;max-width:none;display:flex;flex-flow:row nowrap;align-items:flex-start;justify-content:flex-start;gap:0;pointer-events:none;z-index:40;`;
+  const g = el.cloneNode(true);
+  g.classList.add('ghost');
+  g.style.cssText = `width:${rect.width}px;height:${rect.height}px;`;
+  host.append(g);
+  document.body.append(host);
+  return { host, g };
+}
+const CARD_BG = 'rgba(34, 30, 44, .88)';
+const SWAP_MS = 300, SWAP_DELAY = 60;
 sensePop.addEventListener('click', (e) => {
   const card = e.target.closest('.chip.alt');
   const a = sense.ann;
@@ -660,26 +671,75 @@ sensePop.addEventListener('click', (e) => {
   const next = sense.order[i], prev = a.pick;
   const cur = currentSenseChip();
   if (!cur) return;
-  const commit = () => {
-    S.senses[a.key] = next;
-    sense.order[i] = prev;            // 原来那张落到被点的这张的位置
-    paintAnnotations();
-    sense.ann = (S.anns || []).find((x) => x.key === a.key && !x.off) || null;
-    if (sense.ann) renderSensePop(false); else hideSensePop();
-    sense.busy = false;
-  };
   api.post('/api/song/sense', { key: S.song.key, ann: a.key, sense: next }).catch((err) => {
     toast(`保存失败：${err.message}`);
     if (S.senses[a.key] === next) { delete S.senses[a.key]; paintAnnotations(); hideSensePop(); }
   });
+
+  // 先记下换之前各张卡的位置，再直接换成最终状态，动画只负责把「之前」过渡到「之后」
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const box = sense.box;
+  const rc = cur.getBoundingClientRect(), ra = card.getBoundingClientRect();
+  const curBg = getComputedStyle(cur).backgroundColor;
+  const out = still ? null : ghostChip(cur, rc, box.className);   // 被换下的那张
+  const before = new Map();
+  for (const el of box.querySelectorAll('.chip[data-key]')) before.set(`k:${el.dataset.key}`, el.getBoundingClientRect());
+  for (const el of sensePop.querySelectorAll('.chip.alt')) before.set(`s:${sense.order[+el.dataset.i]}`, el.getBoundingClientRect());
+
+  S.senses[a.key] = next;
+  sense.order = [...sense.order.filter((_, k) => k !== i), prev];  // 被换下的义项排到最下面
+  paintAnnotations();
+  sense.ann = (S.anns || []).find((x) => x.key === a.key && !x.off) || null;
+  if (!sense.ann) { out?.host.remove(); return hideSensePop(); }
+  renderSensePop(false);
+  const fresh = currentSenseChip();
+  if (still || !fresh) { out?.host.remove(); return; }
+
   sense.busy = true;
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return commit();
-  // 两张卡互换位置
-  const ra = card.getBoundingClientRect(), rc = cur.getBoundingClientRect();
-  const opt = { duration: 320, easing: 'cubic-bezier(.3, .75, .2, 1)' };
-  card.style.zIndex = 2;
-  cur.animate([{ transform: 'none' }, { transform: `translate(${ra.left - rc.left}px, ${ra.top - rc.top}px)` }], opt);
-  card.animate([{ transform: 'none' }, { transform: `translate(${rc.left - ra.left}px, ${rc.top - ra.top}px)` }], opt).onfinish = commit;
+  setTimeout(() => { sense.busy = false; }, SWAP_DELAY + SWAP_MS + 30);
+  const ease = 'cubic-bezier(.3, .75, .2, 1)';
+  const slide = (el, from) => {
+    const to = el.getBoundingClientRect();
+    const dx = from.left - to.left, dy = from.top - to.top;
+    if (Math.abs(dx) > .5 || Math.abs(dy) > .5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: SWAP_MS, easing: ease });
+  };
+
+  // 1. 退弹：旧义项从卡位向右上弹出，转着落下并淡出（横向匀速 + 纵向先升后落 = 抛物线）
+  const spin = clamp(2600 / rc.width, 7, 24);
+  out.host.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(76px)' }], { duration: 600, easing: 'cubic-bezier(.25, .6, .6, 1)', fill: 'forwards' });
+  out.g.animate([
+    { transform: 'translateY(0) rotate(0deg)', opacity: 1, backgroundColor: curBg, easing: 'cubic-bezier(.15, .7, .4, 1)' },
+    { offset: .36, transform: `translateY(-30px) rotate(${spin * .4}deg)`, opacity: 1, backgroundColor: CARD_BG, easing: 'cubic-bezier(.55, 0, .9, .55)' },
+    { transform: `translateY(72px) rotate(${spin}deg)`, opacity: 0, backgroundColor: CARD_BG },
+  ], { duration: 600, fill: 'forwards' }).onfinish = () => out.host.remove();
+
+  // 2. 上膛：被点的那张飞进卡位，一路把宽度和「+N」平滑过渡到位，落定后换回真正的标注
+  const rn = fresh.getBoundingClientRect();
+  const inn = ghostChip(fresh, rn, box.className);
+  const opt = { duration: SWAP_MS, delay: SWAP_DELAY, fill: 'both' };
+  fresh.animate([{ opacity: 0 }, { opacity: 0 }], { duration: SWAP_DELAY + SWAP_MS });
+  inn.host.animate([{ transform: `translate(${ra.left - rn.left}px, ${ra.top - rn.top}px)` }, { transform: 'none' }], { ...opt, easing: 'cubic-bezier(.3, 1.3, .5, 1)' })
+    .onfinish = () => inn.host.remove();
+  inn.g.animate([
+    { width: `${ra.width}px`, height: `${ra.height}px`, backgroundColor: CARD_BG },
+    { width: `${rn.width}px`, height: `${rn.height}px`, backgroundColor: getComputedStyle(fresh).backgroundColor },
+  ], { ...opt, easing: ease });
+  inn.g.querySelector('.more')?.animate([{ opacity: 0 }, { opacity: 0, offset: .4 }, { opacity: 1 }], opt);
+
+  // 3. 补位：同一行的其他标注、列表里剩下的小卡滑到新位置
+  for (const el of box.querySelectorAll('.chip[data-key]')) {
+    const from = el !== fresh && before.get(`k:${el.dataset.key}`);
+    if (from) slide(el, from);
+  }
+  const cards = [...sensePop.querySelectorAll('.chip.alt')];
+  for (const el of cards.slice(0, -1)) {
+    const from = before.get(`s:${sense.order[+el.dataset.i]}`);
+    if (from) slide(el, from);
+  }
+  // 4. 回仓：旧义项在最下面由左到右浮现
+  const back = cards[cards.length - 1];
+  back.classList.add('back');
+  back.addEventListener('animationend', () => back.classList.remove('back'), { once: true });
 });
 
 // 修改模式下点标注：在这首歌里隐藏 / 恢复它
@@ -995,7 +1055,6 @@ function toggleMenu(open = $('#menu').hidden) {
 $('#btn-menu').addEventListener('click', () => toggleMenu());
 $('#btn-dict').addEventListener('click', () => setMode('dict'));
 $('#btn-edit').addEventListener('click', () => { toggleMenu(false); setMode('edit'); });
-$('#mode-chip').addEventListener('click', () => { if (S.mode === 'edit') setMode('edit'); });
 $('#btn-library').addEventListener('click', openLibrary);
 $('#btn-vocab').addEventListener('click', () => { $('#vocab').hidden = false; loadVocab(); });
 $('#btn-source').addEventListener('click', () => { toggleMenu(false); openSource(); });
@@ -1049,6 +1108,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === ']') setOffset(S.offset + 0.1);
   else if (e.key === 'f' || e.key === 'F') setView(prefs.view === 'apple' ? 'focus' : 'apple');
   else if (e.key === 'd' || e.key === 'D') setMode('dict');
+  else if (e.key === 'e' || e.key === 'E') setMode('edit');
 });
 addEventListener('resize', () => scrollToActive(true));
 

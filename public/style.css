@@ -40,6 +40,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .seg-btn { padding: 4px 11px; border-radius: 999px; color: var(--fg-3); font-size: 13px; white-space: nowrap; transition: background .15s, color .15s; }
 .seg-btn:hover { color: var(--fg); }
 .seg-btn.on { background: rgba(255, 255, 255, .88); color: #2a2433; font-weight: 600; }
+#btn-edit.on { background: var(--warn); }
 .pill.on { background: rgba(255, 255, 255, .88); color: #2a2433; font-weight: 600; }
 .pill.warn { background: var(--warn); color: #2a2433; font-weight: 600; border-color: transparent; }
 .menu { padding: 6px; gap: 0; min-width: 220px; }
@@ -145,7 +146,7 @@ ruby { ruby-align: center; }
 .chip .ds { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 22em; }
 .chip.g { --c: var(--grammar); } .chip.v { --c: var(--vocab); }
 .ann.cards { flex-direction: column; gap: 6px; }
-.ann.cards .chip { display: grid; grid-template-columns: auto auto 1fr; padding: 7px 12px; column-gap: 8px; }
+.ann.cards .chip { display: grid; grid-template-columns: auto auto auto 1fr; padding: 7px 12px; column-gap: 8px; }
 .ann.cards .chip .ds { grid-column: 1 / -1; white-space: normal; max-width: none; color: var(--fg-2); }
 
 /* ---------- 歌词（大字样式） ---------- */
@@ -159,7 +160,7 @@ ruby { ruby-align: center; }
 .f-cur .roma { font-size: clamp(12px, 1.2vw, 18px); color: var(--fg-3); letter-spacing: .05em; }
 .f-ann { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 900px; min-height: 30px; }
 .f-ann.cards { flex-direction: row; align-items: stretch; }
-.f-ann.cards .chip { display: grid; grid-template-columns: auto auto 1fr; padding: 8px 14px; column-gap: 8px; max-width: 280px; text-align: left; }
+.f-ann.cards .chip { display: grid; grid-template-columns: auto auto auto 1fr; padding: 8px 14px; column-gap: 8px; max-width: 280px; text-align: left; }
 .f-ann.cards .chip .ds { grid-column: 1 / -1; white-space: normal; }
 .f-ann .chip { font-size: 13.5px; }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
@@ -204,6 +205,7 @@ ruby { ruby-align: center; }
 
 .chip .more { display: none; font-size: 10.5px; color: var(--fg-3); align-self: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .edit-mode .chip .more { display: inline; }
+.cards .chip .more { grid-column: 4; grid-row: 1; justify-self: end; }
 /* 多义词的其他义项：和标注同款的小卡，叠在当前这张下面 */
 .sense-stack { position: fixed; z-index: 35; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: min(560px, 94vw); }
 .sense-stack .chip { cursor: pointer; background: rgba(34, 30, 44, .88); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 6px 20px rgba(0, 0, 0, .28); transition: border-color .15s, background .15s; }
@@ -213,9 +215,21 @@ ruby { ruby-align: center; }
 .sense-stack .chip .ds { color: var(--fg); }
 .sense-stack .chip.in { animation: sense-in .26s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i) * 32ms); }
 .sense-stack.big .chip { font-size: 13.5px; }
-.sense-stack.cards .chip { display: grid; grid-template-columns: auto auto 1fr; padding: 7px 12px; column-gap: 8px; max-width: 320px; }
+.sense-stack.cards .chip { display: grid; grid-template-columns: auto auto auto 1fr; padding: 7px 12px; column-gap: 8px; max-width: 320px; }
 .sense-stack.cards .chip .ds { grid-column: 1 / -1; white-space: normal; max-width: none; }
 @keyframes sense-in { from { opacity: 0; transform: translateY(-8px) scale(.97); } }
+/* 换义项：飞行中的替身卡；被换下的义项回到列表最下面时由左到右浮现 */
+.chip.ghost { box-sizing: border-box; margin: 0; max-width: none; overflow: hidden; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); will-change: transform; }
+.chip.ghost .ds { flex: none; }
+.sense-stack .chip.back {
+  -webkit-mask: linear-gradient(90deg, #000 33%, transparent 66%) 0 0 / 300% 100% no-repeat;
+  mask: linear-gradient(90deg, #000 33%, transparent 66%) 0 0 / 300% 100% no-repeat;
+  animation: sense-back .46s cubic-bezier(.3, .7, .3, 1) .36s both;
+}
+@keyframes sense-back {
+  from { opacity: 0; transform: translateX(-12px); -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+  to { opacity: 1; transform: none; -webkit-mask-position: 0 0; mask-position: 0 0; }
+}
 .edit-mode .chip.multi { position: relative; z-index: 1; }
 .edit-mode .chip { cursor: pointer; }
 .edit-mode .chip:hover { border-color: var(--warn); background: rgba(255, 212, 121, .14); }
