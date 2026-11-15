@@ -131,7 +131,11 @@ function run(argv) {
   const t = src.tracks;
   let added = [];
   try { added = t.dateAdded().map(d => d ? +d : 0); } catch (e) {}
-  return JSON.stringify({ n: t.name(), ar: t.artist(), al: t.album(), d: t.duration(), p: t.persistentID(), a: added });
+  // 流派 / 合辑标记：给资料库的「仅日文」筛选用
+  let genre = [], comp = [];
+  try { genre = t.genre(); } catch (e) {}
+  try { comp = t.compilation(); } catch (e) {}
+  return JSON.stringify({ n: t.name(), ar: t.artist(), al: t.album(), d: t.duration(), p: t.persistentID(), a: added, g: genre, c: comp });
 }`;
 const libCache = new Map();
 export async function getLibrary(playlist = '', refresh = false) {
@@ -141,6 +145,7 @@ export async function getLibrary(playlist = '', refresh = false) {
   const tracks = raw.p.map((pid, i) => ({
     pid, name: raw.n[i] || '', artist: raw.ar[i] || '', album: raw.al[i] || '',
     duration: raw.d[i] || 0, added: raw.a[i] || 0,
+    genre: raw.g?.[i] || '', comp: raw.c?.[i] ? 1 : 0,
   }));
   libCache.set(playlist, { at: Date.now(), tracks });
   return tracks;

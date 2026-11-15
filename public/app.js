@@ -592,6 +592,28 @@ $('#rp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#r
 
 // ---------------- 资料库 ----------------
 const lib = { tracks: null, loading: false, shown: 0, filtered: [] };
+// 「仅日文」的判断。元数据里没有语言字段，只能靠线索推断：
+//   1. 流派是日本的（Anime、J-Pop、歌謡曲…）
+//   2. 歌名 / 歌手名里有假名
+//   3. 专辑名里有假名——合辑除外（日区的「ベストセラー」之类合辑里什么歌都有）
+//   4. 同一位歌手只要有一首符合上面任意一条，他的其他歌也算（歌名被译成英文 / 罗马字的那些）
+// 流派明确是其他语种的（Mandopop、K-Pop…）一律不算，免得被第 4 条带进来。
+const JA_GENRE = /^(anime|j-|kayokyoku|enka|japan)|vocaloid/i;
+const NOT_JA_GENRE = /mandopop|cantopop|c-pop|k-pop|chinese|korean|taiwan/i;
+const KANA = /[\u3040-\u30ff]/;
+function markJapanese(tracks) {
+  const artistKey = (t) => t.artist.trim().toLowerCase();
+  const jaArtists = new Set();
+  for (const t of tracks) {
+    const g = t.genre || '';
+    t.ja = !NOT_JA_GENRE.test(g) && (JA_GENRE.test(g) || KANA.test(t.name + t.artist) || (!t.comp && KANA.test(t.album)));
+    if (t.ja && artistKey(t)) jaArtists.add(artistKey(t));
+  }
+  for (const t of tracks) {
+    if (!t.ja && !NOT_JA_GENRE.test(t.genre || '') && jaArtists.has(artistKey(t))) t.ja = true;
+  }
+  return tracks;
+}
 async function openLibrary() {
   $('#library').hidden = false;
   $('#lib-search').focus();
@@ -600,7 +622,7 @@ async function openLibrary() {
   $('#lib-list').innerHTML = '<div class="empty">正在读取 Apple Music 资料库…</div>';
   try {
     const [tracks, playlists] = await Promise.all([api.get('/api/library'), api.get('/api/playlists').catch(() => [])]);
-    lib.tracks = tracks;
+    lib.tracks = markJapanese(tracks);
     $('#lib-playlist').innerHTML = '<option value="">全部歌曲</option>' + playlists.map((p) => `<option value="${esc(p.pid)}">${esc(p.name)}</option>`).join('');
     renderLibrary();
   } catch (e) {
@@ -614,7 +636,7 @@ function renderLibrary() {
   const ja = $('#lib-ja').checked;
   let list = lib.tracks.filter((t) =>
     (!q || `${t.name}\n${t.artist}\n${t.album}`.toLowerCase().includes(q)) &&
-    (!ja || /[぀-ヿ]/.test(t.name + t.artist + t.album)));
+    (!ja || t.ja));
   if ($('#lib-recent').checked) list = [...list].sort((a, b) => b.added - a.added);
   lib.filtered = list;
   lib.shown = 0;
@@ -640,7 +662,7 @@ $('#lib-ja').addEventListener('change', renderLibrary);
 $('#lib-recent').addEventListener('change', renderLibrary);
 $('#lib-playlist').addEventListener('change', async (e) => {
   $('#lib-list').innerHTML = '<div class="empty">读取中…</div>';
-  try { lib.tracks = await api.get(`/api/library?playlist=${encodeURIComponent(e.target.value)}`); renderLibrary(); }
+  try { lib.tracks = markJapanese(await api.get(`/api/library?playlist=${encodeURIComponent(e.target.value)}`)); renderLibrary(); }
   catch (err) { $('#lib-list').innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
 });
 
