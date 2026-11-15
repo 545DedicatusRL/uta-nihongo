@@ -85,7 +85,7 @@ async function loadSong(track, { refresh = false } = {}) {
     if (cand) lyrics = await fetchLyrics(cand, refresh);
   } catch (e) { error = e.message; }
 
-  const out = { key, track, source: cand, offset: meta.offset || 0, lines: [], error, aiAvailable: aiAvailable(), ai: false };
+  const out = { key, track, source: cand, offset: meta.offset || 0, hiddenAnn: meta.hiddenAnn || [], lines: [], error, aiAvailable: aiAvailable(), ai: false };
   if (!lyrics || !lyrics.lines.length) return out;
   out.flags = lyrics.flags;
   if (lyrics.flags.japanese) {
@@ -146,6 +146,14 @@ const routes = {
     const { key, cand } = await readBody(req);
     saveSongMeta(key, { source: cand ? { ...cand, auto: false } : null });
     send(res, 200, { ok: true });
+  },
+  'POST /api/song/annotation': async (req, res) => {
+    // 在这首歌里隐藏 / 恢复某个标注；ann 形如 'v:イイ'、'g:〜てみる'
+    const { key, ann, hidden } = await readBody(req);
+    const set = new Set(getSongMeta(key).hiddenAnn || []);
+    if (hidden) set.add(String(ann)); else set.delete(String(ann));
+    saveSongMeta(key, { hiddenAnn: [...set] });
+    send(res, 200, { ok: true, hiddenAnn: [...set] });
   },
   'POST /api/song/offset': async (req, res) => {
     const { key, offset } = await readBody(req);

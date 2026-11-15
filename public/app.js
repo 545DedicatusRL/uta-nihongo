@@ -105,6 +105,7 @@ async function loadSong(track, { refresh = false, keep = false } = {}) {
 
   S.song = song;
   S.offset = song.offset || 0;
+  S.hiddenAnn = new Set(song.hiddenAnn || []);
   S.lines = withGaps(song.lines);
   S.active = -2;
   updateOffsetLabel();
@@ -304,6 +305,8 @@ function annotationsFor(line) {
         if (!tok.v) return;
         const d = S.dict[tok.b];
         if (!d || d.miss || !levelOK(d.lv)) return;
+        // 既没有级别、也不是常用词、中文词典里也查不到：多半是撞上了不相干的冷僻词条（如 イイ → Iran-Iraq）
+        if (!d.lv && !d.common && !d.zh) return;
         // 纯假名写的动词（如可能形「なれる」）在词典里常对到别的词，宁可不标
         if (tok.pos === '动' && !KANJI.test(tok.b) && d.w !== tok.b) return;
         items.push({ type: 'v', title: tok.b, rd: d.r, lv: d.lv, desc: meaningOf(d), start: ti, end: ti + 1 });
@@ -311,21 +314,26 @@ function annotationsFor(line) {
     }
   }
   const seen = new Set();
-  const uniq = items.filter((a) => { const k = a.type + a.title; if (seen.has(k)) return false; seen.add(k); return true; });
+  const uniq = items.filter((a) => { a.key = `${a.type}:${a.title}`; if (seen.has(a.key)) return false; seen.add(a.key); return true; });
+  const hidden = S.hiddenAnn || new Set();
   const rank = (a) => RANK[a.lv] ?? 2.5;
-  return uniq
+  const shown = uniq.filter((a) => !hidden.has(a.key))
     .map((a, k) => ({ a, k })).sort((x, y) => rank(y.a) - rank(x.a) || x.k - y.k)
     .slice(0, prefs.annMax).sort((x, y) => x.a.start - y.a.start || x.k - y.k).map((x) => x.a);
+  // 这首歌里被关掉的标注：平时不出现，只在修改模式下以虚线框列出，方便加回来
+  const off = S.mode === 'edit' ? uniq.filter((a) => hidden.has(a.key)).map((a) => ({ ...a, off: true })) : [];
+  return [...shown, ...off];
 }
 function chipHTML(a) {
-  return `<span class="chip ${a.type}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span></span>`;
+  return `<span class="chip ${a.type}${a.off ? ' off' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span></span>`;
 }
 function paintAnnotations() {
   const line = S.lines[S.active];
   const anns = prefs.ann ? annotationsFor(line) : [];
   S.annByTok = {};
-  for (const a of anns) for (let k = a.start; k < a.end; k++) (S.annByTok[k] ||= []).push(a);
-  const html = prefs.annStyle === 'underline' ? '' : anns.map(chipHTML).join('');
+  for (const a of anns) if (!a.off) for (let k = a.start; k < a.end; k++) (S.annByTok[k] ||= []).push(a);
+  // 修改模式下总是列出标签（即使平时选的是「仅下划线」），这样才能点
+  const html = prefs.annStyle === 'underline' && S.mode !== 'edit' ? '' : anns.map(chipHTML).join('');
   const roots = [$('#f-cur')];
   const el = $('#scroll').children[S.active];
   if (el) roots.push(el);
@@ -379,7 +387,7 @@ document.addEventListener('click', (e) => {
   const lineEl = e.target.closest('.line');
   const inFocus = e.target.closest('#f-cur');
   if (S.mode === 'dict' && (lineEl || inFocus)) return dictClick(e);
-  if (S.mode === 'edit' && (lineEl || inFocus)) return editClick(e);
+  if (S.mode === 'edit' && (lineEl || inFocus || e.target.closest('#f-ann'))) return editClick(e);
   const next = e.target.closest('#f-next');
   const i = lineEl ? +lineEl.dataset.i : next && next.dataset.i !== '' ? +next.dataset.i : -1;
   const line = S.lines[i];
@@ -426,7 +434,8 @@ function setMode(mode) {
   tip.hidden = true;
   if (S.mode !== 'dict') { S.sel = null; paintSelection(); resumeIfPausedByDict(); }
   updateDictBar();
-  if (S.mode === 'edit') toast('点击带虚线框的汉字即可修改读音');
+  paintAnnotations();
+  if (S.mode === 'edit') toast('点汉字改读音；点标注可在这首歌里隐藏或恢复');
   requestAnimationFrame(() => scrollToActive(true));
 }
 function resumeIfPausedByDict() {
@@ -552,7 +561,21 @@ $('#db-pause').addEventListener('change', (e) => { prefs.dictPause = e.target.ch
 
 // ---------------- 修改读音 ----------------
 let editing = null;
+// 修改模式下点标注：在这首歌里隐藏 / 恢复它
+async function toggleAnnotation(chip) {
+  if (!S.song) return;
+  const key = chip.dataset.key;
+  const hide = !S.hiddenAnn.has(key);
+  try { await api.post('/api/song/annotation', { key: S.song.key, ann: key, hidden: hide }); }
+  catch (e) { return toast(`保存失败：${e.message}`); }
+  if (hide) S.hiddenAnn.add(key); else S.hiddenAnn.delete(key);
+  paintAnnotations();
+  const name = chip.querySelector('b')?.textContent || '';
+  toast(hide ? `这首歌里不再显示「${name}」（修改模式下可点回来）` : `已恢复「${name}」`);
+}
 function editClick(e) {
+  const chip = e.target.closest('.chip[data-key]');
+  if (chip) return toggleAnnotation(chip);
   const segEl = e.target.closest('.seg.k');
   const jp = e.target.closest('.jp');
   if (!segEl || !jp) return;

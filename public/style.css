@@ -202,6 +202,13 @@ ruby { ruby-align: center; }
 .edit-mode .seg.src-user rt { color: var(--warn); opacity: 1; }
 .edit-mode .timed .seg { background: none; color: inherit; }
 
+.edit-mode .chip { cursor: pointer; }
+.edit-mode .chip:hover { border-color: var(--warn); background: rgba(255, 212, 121, .14); }
+.chip.off { border-style: dashed; border-color: var(--fg-3); background: none; opacity: .6; }
+.chip.off b { color: var(--fg-2); }
+.chip.off .lv { background: var(--fg-3); }
+.chip.off:hover { opacity: 1; }
+
 /* ---------- 通用控件 ---------- */
 .btn { padding: 6px 14px; border-radius: 8px; background: rgba(255, 255, 255, .12); border: 1px solid var(--line); color: var(--fg); white-space: nowrap; text-decoration: none; display: inline-block; }
 .btn:hover { background: rgba(255, 255, 255, .2); }
