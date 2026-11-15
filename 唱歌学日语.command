@@ -33,4 +33,9 @@ if curl -s -m 2 "$URL/api/settings" | grep -q '"hasKey"'; then
   done
 fi
 ( sleep 1.5; open_ui ) &
-PORT="$PORT" node server/index.js
+# 退出码 75 = 程序请求重启（更新到新版时用）：在同一个窗口里重新启动
+while true; do
+  PORT="$PORT" node server/index.js
+  [ $? -eq 75 ] || break
+  echo "—— 正在重启到新版本 ——"
+done

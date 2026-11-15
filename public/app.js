@@ -906,6 +906,12 @@ setStatus('正在连接 Apple Music…');
 const es = new EventSource('/api/events');
 es.onmessage = (e) => onState(JSON.parse(e.data));
 es.onerror = () => { if (!S.track) setStatus('和本地服务的连接断开了，请确认程序仍在运行。'); };
+// 服务重启过（比如更新到了新版）：重新连上后自动刷新页面，换上新界面
+let bootId = 0;
+es.onopen = () => api.get('/api/info').then((i) => {
+  if (bootId && i.boot && i.boot !== bootId) location.reload();
+  bootId = i.boot || bootId;
+}).catch(() => {});
 requestAnimationFrame(frame);
 // 调试入口：地址加 ?debug 后可在控制台用 __uta.onState(...) 模拟播放状态
 if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs }; }

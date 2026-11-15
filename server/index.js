@@ -25,6 +25,8 @@ function readVersion() {
   }
 }
 const VERSION = readVersion();
+const BOOT = Date.now(); // 每次启动都不同：界面靠它发现「服务已换成新版」并自动刷新
+const RESTART_CODE = 75; // 启动脚本看到这个退出码会立刻重新启动（即换上磁盘里的新代码）
 const PUBLIC = path.join(ROOT, 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
 
@@ -217,7 +219,12 @@ const routes = {
     res.end('﻿' + rows.join('\n'));
   },
 
-  'GET /api/info': (req, res) => send(res, 200, { root: ROOT, version: VERSION }),
+  'GET /api/info': (req, res) => send(res, 200, { root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size }),
+  // 更新代码后原地重启：退出并让启动脚本重新拉起。不是由启动脚本启动的（如 npm start）则只会退出。
+  'POST /api/restart': (req, res) => {
+    send(res, 200, { ok: true });
+    setTimeout(() => { music.stopWatcher(); process.exit(RESTART_CODE); }, 150);
+  },
   'GET /api/settings': (req, res) => {
     const s = getSettings();
     send(res, 200, { model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY });
@@ -235,6 +242,9 @@ const routes = {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const handler = routes[`${req.method} ${url.pathname}`];
+  // 只接受本机页面发来的写操作，避免别的网站借浏览器向本地服务发请求
+  const origin = req.headers.origin;
+  if (req.method !== 'GET' && origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return send(res, 403, { error: 'forbidden' });
   if (handler) {
     try { await handler(req, res, url.searchParams); }
     catch (e) { if (!res.headersSent) send(res, 500, { error: e.message }); else res.end(); }
