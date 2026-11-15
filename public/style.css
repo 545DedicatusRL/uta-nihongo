@@ -251,6 +251,11 @@ ruby { ruby-align: center; }
 .btn.primary { background: #fff; color: #2a2433; font-weight: 600; border-color: transparent; }
 .btn.primary:hover { background: #f0ecf6; }
 .btn.small { padding: 3px 10px; font-size: 12px; }
+#bye { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; text-align: center; background: rgba(24, 20, 32, .82); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); animation: bye-in .35s ease-out; }
+#bye[hidden] { display: none; }
+#bye b { display: block; font-size: 22px; margin-bottom: 8px; }
+#bye span { color: var(--fg-2); }
+@keyframes bye-in { from { opacity: 0; } }
 .btn:disabled { opacity: .5; cursor: default; }
 .icon-btn { width: 28px; height: 28px; border-radius: 50%; color: var(--fg-2); }
 .icon-btn:hover { background: var(--glass); color: var(--fg); }

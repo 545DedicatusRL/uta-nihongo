@@ -43,6 +43,7 @@ const now = () => (clock.playing ? clock.pos + (performance.now() - clock.at) / 
 function setClock(pos, playing = clock.playing) { clock.pos = pos; clock.at = performance.now(); clock.playing = playing; }
 
 function onState(s) {
+  if (s.bye) return showBye();
   S.player = s;
   const playing = s.state === 'playing';
   app.classList.toggle('playing', playing);
@@ -1126,6 +1127,18 @@ function toast(msg) {
 applyPrefs();
 updateOffsetLabel();
 setStatus('正在连接 Apple Music…');
+// 程序退出了（在设置里点了退出，或从程序坞退出）：盖上提示，不再重连
+function showBye() {
+  es.close();
+  $$('.modal, .drawer, .popover').forEach((el) => { el.hidden = true; });
+  $('#bye').hidden = false;
+  setTimeout(() => window.close(), 600); // 独立窗口能直接关掉；普通标签页关不了，就留着提示
+}
+$('#set-quit').addEventListener('click', async () => {
+  $('#set-quit').disabled = true;
+  try { await api.post('/api/quit', {}); } catch (e) { $('#set-quit').disabled = false; return toast(`退出失败：${e.message}`); }
+  showBye();
+});
 const es = new EventSource('/api/events');
 es.onmessage = (e) => onState(JSON.parse(e.data));
 es.onerror = () => { if (!S.track) setStatus('和本地服务的连接断开了，请确认程序仍在运行。'); };

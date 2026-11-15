@@ -128,7 +128,7 @@
   <button class="menu-item" id="btn-offset" role="menuitem"><i class="ck"></i>时间对齐<span class="kbd" id="offset-badge"></span></button>
   <button class="menu-item" id="btn-source" role="menuitem"><i class="ck"></i>歌词来源…</button>
   <div class="menu-sep"></div>
-  <button class="menu-item" id="btn-settings" role="menuitem"><i class="ck"></i>标注、释义语言、AI…</button>
+  <button class="menu-item" id="btn-settings" role="menuitem"><i class="ck"></i>更多设置…</button>
 </div>
 
 <!-- 多义词义项选择（修改模式下悬停标注时出现） -->
@@ -204,12 +204,17 @@
       <h3>说明</h3>
       <p class="muted">播放由本机的 Apple Music 完成，本程序只读取资料库和播放进度。歌词来自网易云音乐 / QQ 音乐；假名由本地词库（kuromoji）标注，并用歌词源自带的罗马音自动纠正。词汇书、读音修正、时间偏移都保存在程序目录的 data 文件夹里。</p>
       <p class="muted" id="about-version"></p>
-      <p class="muted">快捷键：空格 播放/暂停　←/→ 上一句/下一句　F 切换样式　D 辞书模式　[ ] 歌词对齐　Esc 关闭</p>
+      <p class="muted">快捷键：空格 播放/暂停　←/→ 上一句/下一句　F 切换样式　D 辞书模式　E 修改模式　[ ] 歌词对齐　Esc 关闭</p>
+
+      <h3>程序</h3>
+      <div class="form-row"><span>退出</span><button class="btn" id="set-quit">退出唱歌学日语</button><span class="muted">程序在后台运行，关掉界面窗口不会退出；Apple Music 不受影响。</span></div>
     </div>
   </div>
 </div>
 
 <div id="tip" hidden></div>
+<!-- 程序退出后盖在界面上的提示 -->
+<div id="bye" hidden><div><b>唱歌学日语 已退出</b><span>可以关掉这个窗口了。想再用时，双击桌面上的「唱歌学日语」图标。</span></div></div>
 <div id="toast" hidden></div>
 <script type="module" src="app.js"></script>
 </body>

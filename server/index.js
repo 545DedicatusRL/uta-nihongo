@@ -241,6 +241,12 @@ const routes = {
     send(res, 200, { ok: true });
     setTimeout(() => { music.stopWatcher(); process.exit(RESTART_CODE); }, 150);
   },
+  // 退出程序（设置里的按钮、程序坞图标的「退出」）：先告诉界面，再结束；启动脚本看到正常退出就不再重启
+  'POST /api/quit': (req, res) => {
+    send(res, 200, { ok: true });
+    for (const c of sseClients) c.write(`data: ${JSON.stringify({ bye: true })}\n\n`);
+    setTimeout(() => { music.stopWatcher(); process.exit(0); }, 200);
+  },
   'GET /api/settings': (req, res) => {
     const s = getSettings();
     send(res, 200, { model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY });
@@ -280,8 +286,8 @@ server.listen(PORT, '127.0.0.1', () => {
   if (!process.env.UTA_NO_MUSIC && !process.env.UTA_NO_SHORTCUT) {
     ensureDesktopShortcut()
       .then((r) => {
-        if (r === 'created') console.log('已在桌面创建快捷方式「唱歌学日语」，以后双击它即可启动。');
-        else if (r === 'updated') console.log('桌面快捷方式已更新到当前程序位置。');
+        if (r === 'created') console.log('已在桌面创建「唱歌学日语」图标，以后双击它即可启动（不会再打开终端）。');
+        else if (r === 'updated') console.log('桌面的「唱歌学日语」图标已更新。');
       })
       .catch((e) => console.error('桌面快捷方式创建失败（下次启动会重试）：', e.message));
   }
