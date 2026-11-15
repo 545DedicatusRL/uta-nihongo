@@ -29,7 +29,7 @@
 
 ## 致谢
 
-这个项目的想法来自 [Marumaru](https://www.marumaru-x.com/japanese-song) 和「唱歌学日语」——两个用歌词学日语的工具。本项目是受它们启发的个人练手作品，与它们没有关联。
+这个项目的想法来自 [Marumaru](https://www.marumaru-x.com/japanese-song) 和「唱歌学日语」。本项目是受它们启发的个人练手作品，与它们没有关联。
 
 ## 说明
 
