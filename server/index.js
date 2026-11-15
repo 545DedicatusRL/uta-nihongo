@@ -156,10 +156,10 @@ const routes = {
     send(res, 200, { ok: true, hiddenAnn: [...set] });
   },
   'POST /api/song/sense': async (req, res) => {
-    // 在这首歌里给某个词手动指定义项；sense 为 null 表示恢复自动
-    const { key, ann, sense } = await readBody(req);
-    const senses = { ...(getSongMeta(key).senses || {}) };
-    if (sense === null || sense === undefined) delete senses[ann]; else senses[ann] = String(sense);
+    // 在这首歌里给某个词手动指定义项；sense 为 null 表示恢复自动；clear 为 true 表示清掉这首歌的全部手动选择
+    const { key, ann, sense, clear } = await readBody(req);
+    const senses = clear ? {} : { ...(getSongMeta(key).senses || {}) };
+    if (clear) { /* 已清空 */ } else if (sense === null || sense === undefined) delete senses[ann]; else senses[ann] = String(sense);
     saveSongMeta(key, { senses });
     send(res, 200, { ok: true, senses });
   },

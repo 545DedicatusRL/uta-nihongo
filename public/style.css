@@ -202,12 +202,21 @@ ruby { ruby-align: center; }
 .edit-mode .seg.src-user rt { color: var(--warn); opacity: 1; }
 .edit-mode .timed .seg { background: none; color: inherit; }
 
-.chip .more { display: none; font-size: 10.5px; color: var(--fg-3); align-self: center; white-space: nowrap; }
+.chip .more { display: none; font-size: 10.5px; color: var(--fg-3); align-self: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .edit-mode .chip .more { display: inline; }
-.ann.cards .chip .more, .f-ann.cards .chip .more { grid-column: 1 / -1; }
-#sense-pop { max-width: min(380px, 92vw); z-index: 35; }
-#sense-pop .menu-item { align-items: flex-start; line-height: 1.45; }
-#sense-pop .menu-item span { white-space: normal; }
+/* 多义词的其他义项：和标注同款的小卡，叠在当前这张下面 */
+.sense-stack { position: fixed; z-index: 35; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: min(560px, 94vw); }
+.sense-stack .chip { cursor: pointer; background: rgba(34, 30, 44, .88); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 6px 20px rgba(0, 0, 0, .28); transition: border-color .15s, background .15s; }
+.sense-stack .chip:hover { border-color: var(--vocab); background: rgba(48, 44, 60, .94); }
+.sense-stack .chip b, .sense-stack .chip .rd, .sense-stack .chip .lv { opacity: .55; transition: opacity .15s; }
+.sense-stack .chip:hover b, .sense-stack .chip:hover .rd, .sense-stack .chip:hover .lv { opacity: 1; }
+.sense-stack .chip .ds { color: var(--fg); }
+.sense-stack .chip.in { animation: sense-in .26s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i) * 32ms); }
+.sense-stack.big .chip { font-size: 13.5px; }
+.sense-stack.cards .chip { display: grid; grid-template-columns: auto auto 1fr; padding: 7px 12px; column-gap: 8px; max-width: 320px; }
+.sense-stack.cards .chip .ds { grid-column: 1 / -1; white-space: normal; max-width: none; }
+@keyframes sense-in { from { opacity: 0; transform: translateY(-8px) scale(.97); } }
+.edit-mode .chip.multi { position: relative; z-index: 1; }
 .edit-mode .chip { cursor: pointer; }
 .edit-mode .chip:hover { border-color: var(--warn); background: rgba(255, 212, 121, .14); }
 .chip.off { border-style: dashed; border-color: var(--fg-3); background: none; opacity: .6; }

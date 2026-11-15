@@ -130,7 +130,7 @@
 </div>
 
 <!-- 多义词义项选择（修改模式下悬停标注时出现） -->
-<div class="popover menu" id="sense-pop" hidden></div>
+<div class="sense-stack" id="sense-pop" hidden></div>
 
 <!-- 对齐 -->
 <div class="popover" id="offset-pop" hidden>
@@ -187,6 +187,9 @@
       <div class="form-row"><span>JLPT 级别</span><span id="set-levels"></span></div>
       <div class="form-row"><span>词汇释义语言</span>
         <select id="set-lang"><option value="zh">中文</option><option value="en">English</option><option value="both">中文 + English</option></select></div>
+      <div class="form-row"><span>多义词</span>
+        <label class="chk"><input type="checkbox" id="set-autosense"> 按每句的中文翻译自动选义项</label>
+        <button class="btn small" id="set-clear-senses" hidden></button></div>
       <div class="form-row"><span>数据来源</span>
         <select id="set-source"><option value="auto">有 AI 讲解时优先用 AI</option><option value="builtin">只用内置规则 + 词典</option></select></div>
 

@@ -23,7 +23,7 @@ const DEFAULT_PREFS = {
   view: 'apple', furi: true, zh: true, roma: false, ann: true,
   annStyle: 'chips', annMax: 4, annGrammar: true, annVocab: true, annSource: 'auto',
   levels: { N5: false, N4: true, N3: true, N2: true, N1: true, x: true },
-  dictChar: false, dictPause: true, meaningLang: 'zh',
+  dictChar: false, dictPause: true, meaningLang: 'zh', autoSense: true,
 };
 let prefs = { ...DEFAULT_PREFS };
 try { const saved = JSON.parse(localStorage.getItem('uta-prefs') || '{}'); prefs = { ...prefs, ...saved, levels: { ...prefs.levels, ...(saved.levels || {}) } }; } catch { /* 无痕模式等 */ }
@@ -214,6 +214,7 @@ function findActive(t) {
 }
 function setActive(i) {
   S.active = i;
+  hideSensePop();
   const els = $('#scroll').children;
   for (let k = 0; k < els.length; k++) {
     const el = els[k];
@@ -310,7 +311,7 @@ function chooseMeaning(d, line, key) {
   let zh = d.zh || '', how = '';
   const manual = key && S.senses?.[key];
   if (manual && senses.includes(manual)) { zh = manual; how = 'manual'; }
-  else if (senses.length > 1) {
+  else if (senses.length > 1 && prefs.autoSense !== false) {
     if (line?.zh) {
       const ctx = new Set(hanzi(line.zh));
       let best = 0.49; // 至少要有半个小词条对得上
@@ -372,7 +373,7 @@ function annotationsFor(line) {
 }
 function chipHTML(a) {
   const multi = !a.off && a.senses?.length > 1; // 多义词：修改模式下悬停可展开全部义项来挑
-  return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">${a.senses.length} 义 ▾</span>` : ''}</span>`;
+  return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">+${a.senses.length - 1}</span>` : ''}</span>`;
 }
 function paintAnnotations() {
   const line = S.lines[S.active];
@@ -483,8 +484,8 @@ function setMode(mode) {
   if (S.mode !== 'dict') { S.sel = null; paintSelection(); resumeIfPausedByDict(); }
   updateDictBar();
   paintAnnotations();
-  sensePop.hidden = true;
-  if (S.mode === 'edit') toast('点汉字改读音；点标注可隐藏或恢复；鼠标停在多义词标注上可挑义项');
+  hideSensePop();
+  if (S.mode === 'edit') toast('点汉字改读音；点标注可隐藏或恢复；鼠标停在多义词标注上可换义项');
   requestAnimationFrame(() => scrollToActive(true));
 }
 function resumeIfPausedByDict() {
@@ -612,48 +613,79 @@ $('#db-pause').addEventListener('change', (e) => { prefs.dictPause = e.target.ch
 
 // ---------------- 修改读音 ----------------
 let editing = null;
-// 修改模式下，鼠标停在多义词的标注上：展开全部义项，点一个就在这首歌里固定用它
+// 修改模式下，鼠标停在多义词的标注上：其他义项以同款小卡叠在它下面，
+// 点其中一张就和当前这张互换位置（这首歌里固定用它）。
 const sensePop = $('#sense-pop');
-let senseTimer = 0, senseFor = null;
+const sense = { ann: null, box: null, order: [], timer: 0, busy: false };
+function hideSensePop() { clearTimeout(sense.timer); sensePop.hidden = true; sense.ann = null; }
+const altCardHTML = (a, text, i, animate) =>
+  `<span class="chip v alt${animate ? ' in' : ''}" data-i="${i}" style="--i:${i}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(text)}</span></span>`;
+const currentSenseChip = () => sense.box?.querySelector(`.chip.multi[data-key="${CSS.escape(sense.ann.key)}"]`);
+function renderSensePop(animate) {
+  const a = sense.ann;
+  sensePop.className = `sense-stack ${prefs.annStyle}${sense.box?.id === 'f-ann' ? ' big' : ''}`;
+  sensePop.innerHTML = sense.order.map((text, i) => altCardHTML(a, text, i, animate)).join('');
+  const chip = currentSenseChip();
+  if (!chip) return hideSensePop();
+  sensePop.hidden = false;
+  const r = chip.getBoundingClientRect();
+  sensePop.style.left = `${clamp(r.left, 8, Math.max(8, innerWidth - sensePop.offsetWidth - 8))}px`;
+  const below = r.bottom + 6 + sensePop.offsetHeight <= innerHeight - 8;
+  sensePop.style.top = `${below ? r.bottom + 6 : Math.max(8, r.top - sensePop.offsetHeight - 6)}px`;
+}
 function openSensePop(chip) {
   const a = (S.anns || []).find((x) => x.key === chip.dataset.key && !x.off);
   if (!a || !(a.senses?.length > 1)) return;
-  senseFor = a;
-  sensePop.innerHTML = `<div class="menu-title">「${esc(a.title)}」在这首歌里的意思</div>`
-    + a.senses.map((sense, i) => `<button class="menu-item${sense === a.pick ? ' on' : ''}" data-sense="${i}"><i class="ck"></i><span>${esc(sense)}</span></button>`).join('')
-    + `<div class="menu-sep"></div><button class="menu-item${a.how !== 'manual' ? ' on' : ''}" data-sense="auto"><i class="ck"></i><span>自动（按每句的翻译匹配）</span></button>`;
-  sensePop.hidden = false;
-  const r = chip.getBoundingClientRect();
-  sensePop.style.left = `${clamp(r.left, 8, innerWidth - sensePop.offsetWidth - 8)}px`;
-  sensePop.style.top = `${r.bottom + 4 + sensePop.offsetHeight > innerHeight ? Math.max(8, r.top - sensePop.offsetHeight - 4) : r.bottom + 4}px`;
+  sense.ann = a;
+  sense.box = chip.closest('.ann, #f-ann');
+  sense.order = a.senses.filter((x) => x !== a.pick);
+  renderSensePop(true);
 }
 document.addEventListener('mouseover', (e) => {
+  if (sense.busy) return;
   const chip = S.mode === 'edit' ? e.target.closest?.('.chip.multi') : null;
   if (chip || e.target.closest?.('#sense-pop')) {
-    clearTimeout(senseTimer);
-    if (chip && (sensePop.hidden || senseFor?.key !== chip.dataset.key)) openSensePop(chip);
+    clearTimeout(sense.timer);
+    if (chip && (sensePop.hidden || sense.ann?.key !== chip.dataset.key)) openSensePop(chip);
   } else if (!sensePop.hidden) {
-    clearTimeout(senseTimer);
-    senseTimer = setTimeout(() => { sensePop.hidden = true; }, 280); // 留一点时间把鼠标移进浮层
+    clearTimeout(sense.timer);
+    sense.timer = setTimeout(hideSensePop, 300); // 留一点时间把鼠标移到卡片上
   }
 });
-sensePop.addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-sense]');
-  if (!btn || !senseFor || !S.song) return;
-  const a = senseFor;
-  const sense = btn.dataset.sense === 'auto' ? null : a.senses[+btn.dataset.sense];
-  try { await api.post('/api/song/sense', { key: S.song.key, ann: a.key, sense }); }
-  catch (err) { return toast(`保存失败：${err.message}`); }
-  if (sense === null) delete S.senses[a.key]; else S.senses[a.key] = sense;
-  sensePop.hidden = true;
-  paintAnnotations();
-  toast(sense === null ? `「${a.title}」恢复自动选义` : `这首歌里「${a.title}」＝ ${sense}`);
+sensePop.addEventListener('click', (e) => {
+  const card = e.target.closest('.chip.alt');
+  const a = sense.ann;
+  if (!card || !a || !S.song || sense.busy) return;
+  const i = +card.dataset.i;
+  const next = sense.order[i], prev = a.pick;
+  const cur = currentSenseChip();
+  if (!cur) return;
+  const commit = () => {
+    S.senses[a.key] = next;
+    sense.order[i] = prev;            // 原来那张落到被点的这张的位置
+    paintAnnotations();
+    sense.ann = (S.anns || []).find((x) => x.key === a.key && !x.off) || null;
+    if (sense.ann) renderSensePop(false); else hideSensePop();
+    sense.busy = false;
+  };
+  api.post('/api/song/sense', { key: S.song.key, ann: a.key, sense: next }).catch((err) => {
+    toast(`保存失败：${err.message}`);
+    if (S.senses[a.key] === next) { delete S.senses[a.key]; paintAnnotations(); hideSensePop(); }
+  });
+  sense.busy = true;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return commit();
+  // 两张卡互换位置
+  const ra = card.getBoundingClientRect(), rc = cur.getBoundingClientRect();
+  const opt = { duration: 320, easing: 'cubic-bezier(.3, .75, .2, 1)' };
+  card.style.zIndex = 2;
+  cur.animate([{ transform: 'none' }, { transform: `translate(${ra.left - rc.left}px, ${ra.top - rc.top}px)` }], opt);
+  card.animate([{ transform: 'none' }, { transform: `translate(${rc.left - ra.left}px, ${rc.top - ra.top}px)` }], opt).onfinish = commit;
 });
 
 // 修改模式下点标注：在这首歌里隐藏 / 恢复它
 async function toggleAnnotation(chip) {
   if (!S.song) return;
-  sensePop.hidden = true;
+  hideSensePop();
   const key = chip.dataset.key;
   const hide = !S.hiddenAnn.has(key);
   try { await api.post('/api/song/annotation', { key: S.song.key, ann: key, hidden: hide }); }
@@ -871,6 +903,10 @@ async function openSettings() {
   $('#set-grammar').checked = prefs.annGrammar; $('#set-vocabs').checked = prefs.annVocab;
   $('#set-source').value = prefs.annSource;
   $('#set-lang').value = prefs.meaningLang;
+  $('#set-autosense').checked = prefs.autoSense !== false;
+  const picked = Object.keys(S.senses || {}).length;
+  $('#set-clear-senses').hidden = !picked;
+  $('#set-clear-senses').textContent = `清除这首歌里手动选的 ${picked} 个`;
   $('#set-levels').innerHTML = ['N5', 'N4', 'N3', 'N2', 'N1', 'x'].map((k) => `<label class="chk"><input type="checkbox" data-lv="${k}" ${prefs.levels[k] !== false ? 'checked' : ''}> ${k === 'x' ? '未分级' : k}</label>`).join(' ');
   $('#set-ai-state').textContent = S.song?.ai ? '当前歌曲已有 AI 讲解' : '';
   api.get('/api/info').then((i) => { $('#about-version').textContent = `版本 ${i.version || '未知'}　程序位置 ${i.root}`; }).catch(() => {});
@@ -887,11 +923,20 @@ function onAnnPrefChange() {
   prefs.annGrammar = $('#set-grammar').checked; prefs.annVocab = $('#set-vocabs').checked;
   prefs.annSource = $('#set-source').value;
   prefs.meaningLang = $('#set-lang').value;
+  prefs.autoSense = $('#set-autosense').checked;
   $$('#set-levels input').forEach((el) => { prefs.levels[el.dataset.lv] = el.checked; });
   savePrefs();
   paintAnnotations();
 }
-for (const id of ['set-style', 'set-max', 'set-grammar', 'set-vocabs', 'set-source', 'set-lang', 'set-levels']) $(`#${id}`).addEventListener('input', onAnnPrefChange);
+$('#set-clear-senses').addEventListener('click', async () => {
+  if (!S.song) return;
+  try { await api.post('/api/song/sense', { key: S.song.key, clear: true }); } catch (e) { return toast(`清除失败：${e.message}`); }
+  S.senses = {};
+  $('#set-clear-senses').hidden = true;
+  paintAnnotations();
+  toast('已清除，这首歌的多义词恢复自动选义');
+});
+for (const id of ['set-style', 'set-max', 'set-grammar', 'set-vocabs', 'set-source', 'set-lang', 'set-autosense', 'set-levels']) $(`#${id}`).addEventListener('input', onAnnPrefChange);
 async function saveSettings() {
   const body = { model: $('#set-model').value.trim() };
   const key = $('#set-key').value.trim();
@@ -989,6 +1034,7 @@ function stepLine(dir) {
 }
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    hideSensePop();
     const open = $$('.modal, .drawer, .popover').filter((el) => !el.hidden);
     if (open.length) { open.forEach((el) => { el.hidden = true; }); $('#btn-menu').classList.remove('on'); }
     else if (S.sel) $('#db-cancel').click();
