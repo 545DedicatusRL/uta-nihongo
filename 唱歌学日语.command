@@ -8,10 +8,18 @@ fi
 [ -d node_modules ] || npm install
 PORT="${PORT:-3939}"
 URL="http://localhost:$PORT"
-( sleep 1.5
+open_ui() {
   if [ -d "/Applications/Google Chrome.app" ]; then
     open -na "Google Chrome" --args --app="$URL" --window-size=1100,680
   else
     open "$URL"
-  fi ) &
+  fi
+}
+# 已经在运行：只打开界面
+if curl -s -m 2 -o /dev/null "$URL/api/settings"; then
+  echo "唱歌学日语 已在运行，直接打开界面。"
+  open_ui
+  exit 0
+fi
+( sleep 1.5; open_ui ) &
 PORT="$PORT" node server/index.js

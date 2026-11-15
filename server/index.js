@@ -10,6 +10,7 @@ import {
 import * as music from './music.js';
 import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
 import { analyzeLyrics, getTokenizer } from './japanese.js';
+import { ensureDesktopShortcut } from './shortcut.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
@@ -238,6 +239,14 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`唱歌学日语 已启动： http://localhost:${PORT}`);
   if (!process.env.UTA_NO_MUSIC) music.startWatcher(); // UTA_NO_MUSIC=1：不连接 Apple Music（调试界面用）
+  if (!process.env.UTA_NO_MUSIC && !process.env.UTA_NO_SHORTCUT) {
+    ensureDesktopShortcut()
+      .then((r) => {
+        if (r === 'created') console.log('已在桌面创建快捷方式「唱歌学日语」，以后双击它即可启动。');
+        else if (r === 'updated') console.log('桌面快捷方式已更新到当前程序位置。');
+      })
+      .catch((e) => console.error('桌面快捷方式创建失败（下次启动会重试）：', e.message));
+  }
   getTokenizer().catch((e) => console.error('词典加载失败：', e.message));
 });
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { music.stopWatcher(); process.exit(0); });
