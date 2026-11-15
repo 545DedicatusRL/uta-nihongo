@@ -483,7 +483,6 @@ function setMode(mode) {
   updateDictBar();
   paintAnnotations();
   hideSensePop();
-  if (S.mode === 'edit') toast('点汉字改读音；点标注可隐藏或恢复；鼠标停在多义词标注上可换义项');
   requestAnimationFrame(() => scrollToActive(true));
 }
 function resumeIfPausedByDict() {
