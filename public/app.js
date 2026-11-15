@@ -681,7 +681,9 @@ $('#lib-list').addEventListener('click', (e) => {
   row.classList.add('cur');
 });
 $('#lib-search').addEventListener('input', renderLibrary);
-$('#lib-ja').addEventListener('change', renderLibrary);
+// 默认只看日文歌；取消勾选后会记住
+$('#lib-ja').checked = prefs.libJa !== false;
+$('#lib-ja').addEventListener('change', (e) => { prefs.libJa = e.target.checked; savePrefs(); renderLibrary(); });
 $('#lib-recent').addEventListener('change', renderLibrary);
 $('#lib-playlist').addEventListener('change', async (e) => {
   $('#lib-list').innerHTML = '<div class="empty">读取中…</div>';
