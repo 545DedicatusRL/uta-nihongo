@@ -4,7 +4,7 @@
 
 ## 启动
 
-双击 `唱歌学日语.command`（或在终端里 `npm start`，然后打开 http://localhost:3939）。
+双击 `唱歌学日语.command`（或在终端里 `npm start`，然后打开 http://localhost:3939）
 
 第一次运行时，程序会在桌面放一个带图标的「唱歌学日语」快捷方式，以后双击它即可（会打开终端并启动）。删掉它不会再自动生成；想重新生成，删除 `data/.shortcut-created` 后再启动一次。
 
