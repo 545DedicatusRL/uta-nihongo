@@ -85,7 +85,7 @@ async function loadSong(track, { refresh = false } = {}) {
     if (cand) lyrics = await fetchLyrics(cand, refresh);
   } catch (e) { error = e.message; }
 
-  const out = { key, track, source: cand, offset: meta.offset || 0, hiddenAnn: meta.hiddenAnn || [], lines: [], error, aiAvailable: aiAvailable(), ai: false };
+  const out = { key, track, source: cand, offset: meta.offset || 0, hiddenAnn: meta.hiddenAnn || [], senses: meta.senses || {}, lines: [], error, aiAvailable: aiAvailable(), ai: false };
   if (!lyrics || !lyrics.lines.length) return out;
   out.flags = lyrics.flags;
   if (lyrics.flags.japanese) {
@@ -154,6 +154,14 @@ const routes = {
     if (hidden) set.add(String(ann)); else set.delete(String(ann));
     saveSongMeta(key, { hiddenAnn: [...set] });
     send(res, 200, { ok: true, hiddenAnn: [...set] });
+  },
+  'POST /api/song/sense': async (req, res) => {
+    // 在这首歌里给某个词手动指定义项；sense 为 null 表示恢复自动
+    const { key, ann, sense } = await readBody(req);
+    const senses = { ...(getSongMeta(key).senses || {}) };
+    if (sense === null || sense === undefined) delete senses[ann]; else senses[ann] = String(sense);
+    saveSongMeta(key, { senses });
+    send(res, 200, { ok: true, senses });
   },
   'POST /api/song/offset': async (req, res) => {
     const { key, offset } = await readBody(req);

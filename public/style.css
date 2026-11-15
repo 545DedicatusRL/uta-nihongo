@@ -202,6 +202,12 @@ ruby { ruby-align: center; }
 .edit-mode .seg.src-user rt { color: var(--warn); opacity: 1; }
 .edit-mode .timed .seg { background: none; color: inherit; }
 
+.chip .more { display: none; font-size: 10.5px; color: var(--fg-3); align-self: center; white-space: nowrap; }
+.edit-mode .chip .more { display: inline; }
+.ann.cards .chip .more, .f-ann.cards .chip .more { grid-column: 1 / -1; }
+#sense-pop { max-width: min(380px, 92vw); z-index: 35; }
+#sense-pop .menu-item { align-items: flex-start; line-height: 1.45; }
+#sense-pop .menu-item span { white-space: normal; }
 .edit-mode .chip { cursor: pointer; }
 .edit-mode .chip:hover { border-color: var(--warn); background: rgba(255, 212, 121, .14); }
 .chip.off { border-style: dashed; border-color: var(--fg-3); background: none; opacity: .6; }

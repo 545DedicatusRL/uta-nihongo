@@ -106,6 +106,7 @@ async function loadSong(track, { refresh = false, keep = false } = {}) {
   S.song = song;
   S.offset = song.offset || 0;
   S.hiddenAnn = new Set(song.hiddenAnn || []);
+  S.senses = { ...(song.senses || {}) };
   S.lines = withGaps(song.lines);
   S.active = -2;
   updateOffsetLabel();
@@ -277,12 +278,56 @@ if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__ut
 }
 
 // 词典释义按设置的语言取：中文（有道）/ 英文（Jisho）/ 两者
-function meaningOf(d) {
-  if (!d) return '';
-  const zh = d.zh || '', en = d.en?.[0] || '';
-  if (prefs.meaningLang === 'en') return en || zh;
-  if (prefs.meaningLang === 'both') return [zh, en].filter(Boolean).join(' / ');
-  return zh || en;
+// 多义词选义项。优先级：
+//   1. 这首歌里手动指定的
+//   2. 和这一句中文翻译对得上的（context）
+//   3. 单汉字词里，有一个小词条正好就是这个汉字的（落ちる →「落」）。只限单汉字词且完全相等，
+//      避免被「勉強＝勉强」这类中日同形异义的义项带偏
+//   4. 词典默认（前两个义项）
+// 返回 { text 显示用, senses 全部中文义项, zh 选中的中文义项, how: 'manual' | 'context' | 'kanji' | '' }
+const STOPCH = new Set([...'的了是在我你他她它们和与就也都不有这那个着过吧吗呢啊把被让给很还又而及或但其之所以为于']);
+const HAN = /[\u4e00-\u9fff]/;
+const hanzi = (str) => [...str].filter((c) => HAN.test(c) && !STOPCH.has(c));
+// 义项「掉，落；脱落；剥落」→ 小词条 ['掉', '落', '脱落', '剥落']
+const glosses = (sense) => sense.replace(/（[^）]*）|\([^)]*\)/g, '').split(/[，；、,;\s]+/).filter(Boolean);
+// 一个义项和翻译的贴合度：取各小词条里「有多大比例的字出现在翻译中」的最大值；整词出现在翻译里最高
+function senseScore(sense, zhLine, ctx) {
+  let max = 0, sum = 0;
+  for (const g of glosses(sense)) {
+    const chars = hanzi(g);
+    if (!chars.length) continue;
+    let r = chars.filter((c) => ctx.has(c)).length / chars.length;
+    if (chars.length >= 2 && zhLine.includes(g)) r = 2;
+    max = Math.max(max, r);
+    sum += r;
+  }
+  return max + sum * 0.01;
+}
+function chooseMeaning(d, line, key) {
+  if (!d) return { text: '', senses: [], zh: '', how: '' };
+  const en = d.en?.[0] || '';
+  const senses = d.zhs?.length ? d.zhs : d.zh ? [d.zh] : [];
+  let zh = d.zh || '', how = '';
+  const manual = key && S.senses?.[key];
+  if (manual && senses.includes(manual)) { zh = manual; how = 'manual'; }
+  else if (senses.length > 1) {
+    if (line?.zh) {
+      const ctx = new Set(hanzi(line.zh));
+      let best = 0.49; // 至少要有半个小词条对得上
+      for (const sense of senses) {
+        const sc = senseScore(sense, line.zh, ctx);
+        if (sc > best) { best = sc; zh = sense; how = 'context'; }
+      }
+    }
+    if (!how) {
+      const kanji = [...(d.w || '')].filter((c) => HAN.test(c));
+      const own = kanji.length === 1 && senses.find((sense) => glosses(sense).includes(kanji[0]));
+      if (own) { zh = own; how = 'kanji'; }
+    }
+  }
+  const lang = prefs.meaningLang;
+  const text = lang === 'en' ? (en || zh) : lang === 'both' ? [zh, en].filter(Boolean).join(' / ') : (zh || en);
+  return { text, senses: lang === 'en' ? [] : senses, zh, how };
 }
 
 // ---------------- 语法 / 词汇标注 ----------------
@@ -309,7 +354,8 @@ function annotationsFor(line) {
         if (!d.lv && !d.common && !d.zh) return;
         // 纯假名写的动词（如可能形「なれる」）在词典里常对到别的词，宁可不标
         if (tok.pos === '动' && !KANJI.test(tok.b) && d.w !== tok.b) return;
-        items.push({ type: 'v', title: tok.b, rd: d.r, lv: d.lv, desc: meaningOf(d), start: ti, end: ti + 1 });
+        const m = chooseMeaning(d, line, `v:${tok.b}`);
+        items.push({ type: 'v', title: tok.b, rd: d.r, lv: d.lv, desc: m.text, senses: m.senses, pick: m.zh, how: m.how, start: ti, end: ti + 1 });
       });
     }
   }
@@ -325,11 +371,13 @@ function annotationsFor(line) {
   return [...shown, ...off];
 }
 function chipHTML(a) {
-  return `<span class="chip ${a.type}${a.off ? ' off' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span></span>`;
+  const multi = !a.off && a.senses?.length > 1; // 多义词：修改模式下悬停可展开全部义项来挑
+  return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">${a.senses.length} 义 ▾</span>` : ''}</span>`;
 }
 function paintAnnotations() {
   const line = S.lines[S.active];
   const anns = prefs.ann ? annotationsFor(line) : [];
+  S.anns = anns;
   S.annByTok = {};
   for (const a of anns) if (!a.off) for (let k = a.start; k < a.end; k++) (S.annByTok[k] ||= []).push(a);
   // 修改模式下总是列出标签（即使平时选的是「仅下划线」），这样才能点
@@ -369,7 +417,7 @@ document.addEventListener('mouseover', (e) => {
   const tokEl = e.target.closest?.('.line.active .tok, #f-cur .tok');
   const list = tokEl && prefs.ann && !S.mode ? S.annByTok[tokEl.dataset.ti] : null;
   if (!list) { tip.hidden = true; return; }
-  tip.innerHTML = list.map((a) => `<div><b>${esc(a.title)}</b>${a.rd ? `（${esc(a.rd)}）` : ''} ${a.lv || ''}<br>${esc(a.desc)}</div>`).join('<hr style="border:0;border-top:1px solid var(--line)">');
+  tip.innerHTML = list.map((a) => `<div><b>${esc(a.title)}</b>${a.rd ? `（${esc(a.rd)}）` : ''} ${a.lv || ''}<br>${esc(a.desc)}${a.senses?.length > 1 ? `<div class="muted">其他义项：${esc(a.senses.filter((x) => x !== a.pick).join(' ｜ '))}</div>` : ''}</div>`).join('<hr style="border:0;border-top:1px solid var(--line)">');
   tip.hidden = false;
   const r = tokEl.getBoundingClientRect();
   tip.style.left = `${clamp(r.left, 8, innerWidth - tip.offsetWidth - 8)}px`;
@@ -435,7 +483,8 @@ function setMode(mode) {
   if (S.mode !== 'dict') { S.sel = null; paintSelection(); resumeIfPausedByDict(); }
   updateDictBar();
   paintAnnotations();
-  if (S.mode === 'edit') toast('点汉字改读音；点标注可在这首歌里隐藏或恢复');
+  sensePop.hidden = true;
+  if (S.mode === 'edit') toast('点汉字改读音；点标注可隐藏或恢复；鼠标停在多义词标注上可挑义项');
   requestAnimationFrame(() => scrollToActive(true));
 }
 function resumeIfPausedByDict() {
@@ -519,8 +568,10 @@ function updateDictBar(fresh) {
       return;
     }
     if (!r.dataset.dirty && (useBase || !r.value) && d.r) r.value = d.r;
-    if (!m.dataset.dirty && !m.value) m.value = meaningOf(d);
-    const detail = [d.zh, prefs.meaningLang !== 'zh' || !d.zh ? (d.en || []).join('; ') : ''].filter(Boolean).join('　');
+    const picked = chooseMeaning(d, info.line, `v:${word}`);
+    if (!m.dataset.dirty && !m.value) m.value = picked.text;
+    const allZh = (d.zhs?.length ? d.zhs : [d.zh]).filter(Boolean).join(' ｜ ');
+    const detail = [allZh, prefs.meaningLang !== 'zh' || !allZh ? (d.en || []).join('; ') : ''].filter(Boolean).join('　');
     $('#db-info').innerHTML = `${d.lv ? `<span class="lv">${d.lv}</span>` : ''}${esc(d.w)}【${esc(d.r)}】 ${esc(detail)}${swap}`;
   });
 }
@@ -561,9 +612,48 @@ $('#db-pause').addEventListener('change', (e) => { prefs.dictPause = e.target.ch
 
 // ---------------- 修改读音 ----------------
 let editing = null;
+// 修改模式下，鼠标停在多义词的标注上：展开全部义项，点一个就在这首歌里固定用它
+const sensePop = $('#sense-pop');
+let senseTimer = 0, senseFor = null;
+function openSensePop(chip) {
+  const a = (S.anns || []).find((x) => x.key === chip.dataset.key && !x.off);
+  if (!a || !(a.senses?.length > 1)) return;
+  senseFor = a;
+  sensePop.innerHTML = `<div class="menu-title">「${esc(a.title)}」在这首歌里的意思</div>`
+    + a.senses.map((sense, i) => `<button class="menu-item${sense === a.pick ? ' on' : ''}" data-sense="${i}"><i class="ck"></i><span>${esc(sense)}</span></button>`).join('')
+    + `<div class="menu-sep"></div><button class="menu-item${a.how !== 'manual' ? ' on' : ''}" data-sense="auto"><i class="ck"></i><span>自动（按每句的翻译匹配）</span></button>`;
+  sensePop.hidden = false;
+  const r = chip.getBoundingClientRect();
+  sensePop.style.left = `${clamp(r.left, 8, innerWidth - sensePop.offsetWidth - 8)}px`;
+  sensePop.style.top = `${r.bottom + 4 + sensePop.offsetHeight > innerHeight ? Math.max(8, r.top - sensePop.offsetHeight - 4) : r.bottom + 4}px`;
+}
+document.addEventListener('mouseover', (e) => {
+  const chip = S.mode === 'edit' ? e.target.closest?.('.chip.multi') : null;
+  if (chip || e.target.closest?.('#sense-pop')) {
+    clearTimeout(senseTimer);
+    if (chip && (sensePop.hidden || senseFor?.key !== chip.dataset.key)) openSensePop(chip);
+  } else if (!sensePop.hidden) {
+    clearTimeout(senseTimer);
+    senseTimer = setTimeout(() => { sensePop.hidden = true; }, 280); // 留一点时间把鼠标移进浮层
+  }
+});
+sensePop.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-sense]');
+  if (!btn || !senseFor || !S.song) return;
+  const a = senseFor;
+  const sense = btn.dataset.sense === 'auto' ? null : a.senses[+btn.dataset.sense];
+  try { await api.post('/api/song/sense', { key: S.song.key, ann: a.key, sense }); }
+  catch (err) { return toast(`保存失败：${err.message}`); }
+  if (sense === null) delete S.senses[a.key]; else S.senses[a.key] = sense;
+  sensePop.hidden = true;
+  paintAnnotations();
+  toast(sense === null ? `「${a.title}」恢复自动选义` : `这首歌里「${a.title}」＝ ${sense}`);
+});
+
 // 修改模式下点标注：在这首歌里隐藏 / 恢复它
 async function toggleAnnotation(chip) {
   if (!S.song) return;
+  sensePop.hidden = true;
   const key = chip.dataset.key;
   const hide = !S.hiddenAnn.has(key);
   try { await api.post('/api/song/annotation', { key: S.song.key, ann: key, hidden: hide }); }

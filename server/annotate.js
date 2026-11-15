@@ -33,12 +33,14 @@ async function youdao(word, prefer) {
   // 假名写的词同音词多（まま、なれる…）：优先选汉字写法与 Jisho 一致的那条
   const hit = (prefer && cands.find((e) => e.entry === prefer || parts(e).includes(prefer))) || cands.find((e) => e.entry === word) || cands[0];
   if (!hit || !hit.explain) return null;
-  // 「【名词】眨眼；瞬间。闪烁。『…』是『…』的可能形。」→ 去掉词性标记和用法备注，保留前两个义项
+  // 「【名词】眨眼；瞬间。闪烁。『…』是『…』的可能形。」→ 去掉词性标记和用法备注，按句号切成义项。
+  // 词典里义项的先后并不总是按常用程度排（落ちる 的「掉、落」排在最后），所以全部保留：
+  // zhs 是全部义项，交给界面按歌词语境挑；zh 是没有语境可用时的默认显示（前两个）。
   const senses = hit.explain.replace(/【[^】]*】/g, '').split(/[。]/).map((x) => x.trim())
     .filter((x) => x && !/[『「]/.test(x) && x.length <= 40);
   if (!senses.length) return null;
   const p = parts(hit).find((x) => x !== word && /^[\u3040-\u30ffー]+$/.test(x));
-  return { zh: senses.slice(0, 2).join('；'), r: p || '' };
+  return { zh: senses.slice(0, 2).join('；'), zhs: senses.slice(0, 8), r: p || '' };
 }
 // 依次尝试几种写法（歌词里的异体字常查不到，如 出逢う → 出会う）
 async function chineseMeaning(forms, prefer) {
@@ -80,7 +82,7 @@ const ZH_FIX = {
   僕: '我（男性自称）', ぼく: '我（男性自称）', ボク: '我（男性自称）',
   君: '你（对平辈或晚辈）', 俺: '我（男性自称，较随意）',
 };
-const withFix = (w, e) => (ZH_FIX[w] && e && !e.miss ? { ...e, zh: ZH_FIX[w] } : e);
+const withFix = (w, e) => (ZH_FIX[w] && e && !e.miss ? { ...e, zh: ZH_FIX[w], zhs: [ZH_FIX[w]] } : e);
 
 // 批量查询（带并发限制 + 本地缓存）。onlyCached=true 时不发网络请求。
 export async function lookupWords(words, onlyCached = false) {
@@ -88,7 +90,7 @@ export async function lookupWords(words, onlyCached = false) {
   const out = {};
   const todo = [];
   for (const w of new Set(words)) {
-    if (c[w] && c[w].zh !== undefined) out[w] = c[w];
+    if (c[w] && c[w].zhs !== undefined) out[w] = c[w]; // 旧缓存没有 zhs：重新查一次中文释义
     else if (!onlyCached) todo.push(w);
     else if (c[w]) out[w] = c[w];
   }
@@ -105,8 +107,9 @@ export async function lookupWords(words, onlyCached = false) {
         const zh = await chineseMeaning([w, ...(e.alts || [])], e.w !== w ? e.w : undefined);
         if (zh) {
           e.zh = zh.zh;
+          e.zhs = zh.zhs;
           if (e.miss) { delete e.miss; e.w = w; e.r = zh.r; e.lv = ''; e.en = []; }
-        } else e.zh = '';
+        } else { e.zh = ''; e.zhs = []; }
       } catch { /* 网络失败：不缓存，下次重试 */ }
     }
   };

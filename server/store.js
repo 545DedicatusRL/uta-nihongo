@@ -47,7 +47,8 @@ export function saveSettings(patch) {
 
 // ---- 每首歌的元数据：时间偏移、歌词源选择、读音修正 ----
 // hiddenAnn：这首歌里被用户关掉的标注（'v:单词' / 'g:语法点'）
-const DEFAULT_SONG = { offset: 0, source: null, readings: {}, wordReadings: {}, hiddenAnn: [] };
+// senses：这首歌里用户手动指定的义项（'v:单词' → 义项原文）
+const DEFAULT_SONG = { offset: 0, source: null, readings: {}, wordReadings: {}, hiddenAnn: [], senses: {} };
 export function getSongMeta(key) {
   return { ...DEFAULT_SONG, ...readJSON(`songs/${safeName(key)}.json`, {}) };
 }
