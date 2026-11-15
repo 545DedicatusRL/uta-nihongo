@@ -74,6 +74,14 @@ async function jisho(word) {
   };
 }
 
+// 人称代词在词典里排在前面的是同形的另一个义项（僕＝仆人、君＝君主）；那些义项本身没错，
+// 但歌词里几乎总是代词，所以这里直接给出代词义
+const ZH_FIX = {
+  僕: '我（男性自称）', ぼく: '我（男性自称）', ボク: '我（男性自称）',
+  君: '你（对平辈或晚辈）', 俺: '我（男性自称，较随意）',
+};
+const withFix = (w, e) => (ZH_FIX[w] && e && !e.miss ? { ...e, zh: ZH_FIX[w] } : e);
+
 // 批量查询（带并发限制 + 本地缓存）。onlyCached=true 时不发网络请求。
 export async function lookupWords(words, onlyCached = false) {
   const c = cache();
@@ -103,6 +111,7 @@ export async function lookupWords(words, onlyCached = false) {
     }
   };
   await Promise.all([worker(), worker(), worker()]);
+  for (const w in out) out[w] = withFix(w, out[w]);
   return out;
 }
 
