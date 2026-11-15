@@ -889,15 +889,22 @@ function renderVocab() {
   $('#vocab-list').innerHTML = list.length ? list.map((v) => {
     const sentence = v.surface && v.line?.includes(v.surface) ? esc(v.line).replace(esc(v.surface), `<mark>${esc(v.surface)}</mark>`) : esc(v.line);
     return `<div class="vcard" data-id="${esc(v.id)}">
+      <div class="vdel-zone"><button class="vdel" data-act="del" aria-label="删除这个词" title="删除"><span class="x">✕</span><span class="ext"><span>删除</span></span></button></div>
       <div class="w" lang="ja"><ruby>${esc(v.word)}<rt>${esc(v.reading !== v.word ? v.reading : '')}</rt></ruby><small>${esc(v.level || '')}</small></div>
       <div class="m" contenteditable="plaintext-only" spellcheck="false">${esc(v.meaning)}</div>
       <div class="s" lang="ja">${sentence}</div>${v.zh ? `<div class="z">${esc(v.zh)}</div>` : ''}
       <div class="f"><span>${esc([v.song?.name, v.song?.artist].filter(Boolean).join(' — '))}</span>
-        <button class="btn small" data-act="play" title="播放这一句">▶ 听这句</button><button class="btn small" data-act="del">删除</button></div>
+        <button class="btn small" data-act="play" title="播放这一句">▶ 听这句</button></div>
     </div>`;
   }).join('') : `<div class="empty">${vocabList.length ? '没有匹配的单词' : '词汇书还是空的。<br>打开「辞书」模式，点选歌词里的词就能添加。'}</div>`;
 }
 $('#vocab-search').addEventListener('input', renderVocab);
+// 鼠标离开卡片：还没确认的「删除」收回成 ×
+$('#vocab-list').addEventListener('mouseleave', (e) => {
+  if (!e.target.matches?.('.vcard')) return;
+  const b = e.target.querySelector('.vdel.armed');
+  if (b && !b.disabled) { b.classList.remove('armed'); b.title = '删除'; }
+}, true);
 $('#vocab-list').addEventListener('focusout', (e) => {
   const m = e.target.closest('.m');
   if (!m) return;
@@ -912,9 +919,24 @@ $('#vocab-list').addEventListener('click', async (e) => {
   const id = btn.closest('.vcard').dataset.id;
   const v = vocabList.find((x) => x.id === id);
   if (btn.dataset.act === 'del') {
-    await api.post('/api/vocab/delete', { id }).catch(() => {});
+    // 第一次点：× 展开成「删除」；再点一次才真的删
+    if (!btn.classList.contains('armed')) {
+      btn.classList.add('armed');
+      btn.title = '再点一次确认删除';
+      return;
+    }
+    const card = btn.closest('.vcard');
+    btn.disabled = true;
+    try { await api.post('/api/vocab/delete', { id }); } catch (err) { btn.disabled = false; return toast(`删除失败：${err.message}`); }
     vocabList = vocabList.filter((x) => x.id !== id);
-    renderVocab();
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return renderVocab();
+    // 卡片淡出并收起，下面的卡片顺势上移
+    const cs = getComputedStyle(card);
+    card.style.overflow = 'hidden';
+    card.animate([
+      { opacity: 1, height: `${card.offsetHeight}px`, marginTop: cs.marginTop, marginBottom: cs.marginBottom, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom },
+      { opacity: 0, height: '0px', marginTop: '0px', marginBottom: '0px', paddingTop: '0px', paddingBottom: '0px', borderWidth: '0px' },
+    ], { duration: 240, easing: 'cubic-bezier(.3, .75, .2, 1)', fill: 'forwards' }).onfinish = renderVocab;
   } else if (v) {
     if (S.track?.pid !== v.song?.pid) {
       if (!v.song?.pid) return toast('这首歌不在资料库里，无法直接播放');
