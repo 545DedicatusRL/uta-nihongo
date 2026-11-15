@@ -1,0 +1,14 @@
+{
+  "name": "uta-nihongo",
+  "version": "0.1.0",
+  "description": "唱歌学日语 — Apple Music 播放 + 假名/翻译/语法标注歌词",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "kuromoji": "^0.1.2"
+  }
+}
