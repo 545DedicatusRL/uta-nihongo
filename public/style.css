@@ -158,7 +158,7 @@ ruby { ruby-align: center; }
 /* 逐字歌词：按时间从左到右填充 */
 /* 唱到的词会抬起来一点（.on 由 app.js 在唱到时加上），整句唱完后随这一行一起落回去。
    要能位移就得是 inline-block；white-space: pre 保住英文单词之间的空格 */
-.timed .seg { display: inline-block; white-space: pre; transition: transform var(--lt, .4s) cubic-bezier(.22, .68, .24, 1); }
+.timed .seg { display: inline-block; white-space: pre; transition: transform var(--lt, .7s) var(--spring, cubic-bezier(.3, .1, .2, 1)); }
 .line.active.timed .seg.on, #f-cur.timed .seg.on { transform: translateY(-.07em); }
 .dict-mode .timed .seg.on, .edit-mode .timed .seg.on { transform: none !important; }
 .timed .seg { --p: 0; background: linear-gradient(90deg, #fff calc(var(--p) * 110% - 10%), rgba(255, 255, 255, .38) calc(var(--p) * 110%)); -webkit-background-clip: text; background-clip: text; color: transparent; }

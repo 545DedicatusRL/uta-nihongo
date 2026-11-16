@@ -175,8 +175,9 @@ function jpHTML(line, li) {
       let timing = '';
       if (line.ct && line.ct[c0]) {
         const t0 = line.ct[c0][0], t1 = (line.ct[ci - 1] || line.ct[c0])[1];
-        // --lt：唱到这个词时「抬起来」用多久，跟着这个词的时长走（长音慢慢抬，短音快一点）
-        timing = ` data-t0="${t0}" data-t1="${t1}" style="--lt:${clamp(t1 - t0, 0.28, 0.9).toFixed(2)}s"`;
+        // --lt：唱到这个词时「抬起来」的弹簧动画总共多长。弹簧是慢慢起步、走到一半多就基本到位、
+        // 后面是很长的收尾，所以总时长取这个词时长的两倍多：词唱完时大致抬到位，短词之间的抬起会互相叠在一起
+        timing = ` data-t0="${t0}" data-t1="${t1}" style="--lt:${clamp((t1 - t0) * 2.3, 0.6, 1.6).toFixed(2)}s"`;
       }
       const cls = `seg${isK ? ' k' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
       inner += `<span class="${cls}" data-si="${si}"${timing}>${isK && seg.r ? `<ruby>${chars}<rt>${esc(seg.r)}</rt></ruby>` : chars}</span>`;
@@ -398,6 +399,7 @@ function paintDots(f, t) {
   if (s !== f.s) { f.s = s; f.g.style.transform = `scale(${s})`; }
   if (o !== f.o) { f.o = o; f.g.style.opacity = o; }
 }
+const LIFT_LEAD = 0.06; // 比唱到的时刻早一点点开始抬（弹簧起步慢，提前一点才跟得上）
 function tick() {
   const pos = now();
   const dur = S.track?.duration || 0;
@@ -419,7 +421,7 @@ function tick() {
     const p = t <= s.t0 ? 0 : t >= s.t1 ? 1 : Math.round((t - s.t0) / s.d * 200) / 200;
     if (p !== s.p) { s.p = p; s.el.style.setProperty('--p', p); }
     // 唱到了就抬起来：只切一次 class，抬起的过程交给 CSS 过渡
-    const on = t >= s.t0;
+    const on = t >= s.t0 - LIFT_LEAD;
     if (on !== s.on) { s.on = on; s.el.classList.toggle('on', on); }
   }
 }
