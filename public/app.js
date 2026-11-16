@@ -890,9 +890,10 @@ function onQueue(sum) {
   const changed = queueKey(queue.sum) !== queueKey(sum);
   queue.sum = sum;
   if (!changed) return;
-  $('#btn-shuffle').classList.toggle('on', !!sum.shuffle);
-  $('#btn-shuffle').setAttribute('aria-pressed', !!sum.shuffle);
-  $('#btn-queue').classList.toggle('on', !!sum.active);
+  for (const [sel, on] of [['#btn-shuffle', sum.shuffle], ['#queue-shuffle', sum.shuffle], ['#queue-repeat', sum.repeat]]) {
+    $(sel).classList.toggle('on', !!on);
+    $(sel).setAttribute('aria-pressed', !!on);
+  }
   $('#btn-next').title = sum.active && sum.next ? `下一首：${sum.next.name}` : '';
   if (!$('#queue').hidden) loadQueue();
 }
@@ -902,8 +903,6 @@ async function loadQueue() {
   queue.list = v.list;
   $('#queue-count').textContent = v.total ? `· ${Math.max(v.at, 0) + 1} / ${v.total}` : '';
   $('#queue-label').textContent = v.label ? `来自：${v.label}` : '';
-  $('#queue-shuffle').checked = !!v.shuffle;
-  $('#queue-repeat').checked = !!v.repeat;
   const row = (t, cur) => `<div class="track${cur ? ' cur' : ''}" data-pid="${esc(t.pid)}"><div class="n">${esc(t.name)}</div><div class="d">${fmt(t.duration)}</div><div class="a">${esc(t.artist)}</div></div>`;
   if (!v.total) {
     $('#queue-list').innerHTML = '<div class="empty">还没有播放列表。<br>在「资料库」里点一首歌，就会从它开始按当前筛选出的列表播放，播完自动接下一首。</div>';
@@ -917,16 +916,26 @@ async function loadQueue() {
     (rest.length ? `<div class="queue-sec">接下来${v.shuffle ? '（随机）' : ''}</div>${rest.map((t) => row(t)).join('')}` : `<div class="queue-sec">${v.repeat ? '之后从头再来' : '这是最后一首'}</div>`) +
     (more ? `<div class="empty" style="padding:12px"><button class="btn small" id="queue-more">显示更多（还有 ${v.total - Math.max(v.at, 0) - v.list.length} 首）</button></div>` : '');
 }
-$('#btn-queue').addEventListener('click', () => { queue.n = 150; $('#queue').hidden = false; loadQueue(); });
+// 播放列表按钮：点一下打开，再点一下收起；抽屉开着时按钮保持选中的样子（不管是怎么关掉的）
+$('#btn-queue').addEventListener('click', () => {
+  const open = $('#queue').hidden;
+  $('#queue').hidden = !open;
+  if (open) { queue.n = 150; $('#vocab').hidden = true; loadQueue(); }
+});
+new MutationObserver(() => {
+  const open = !$('#queue').hidden;
+  $('#btn-queue').classList.toggle('on', open);
+  $('#btn-queue').setAttribute('aria-pressed', open);
+}).observe($('#queue'), { attributes: true, attributeFilter: ['hidden'] });
 $('#queue-list').addEventListener('click', (e) => {
   if (e.target.closest('#queue-more')) { queue.n += 300; return loadQueue(); }
   const row = e.target.closest('.track');
   if (row) api.post('/api/queue/jump', { pid: row.dataset.pid }).then(onQueue, (err) => toast(err.message));
 });
-const setShuffle = (on) => api.post('/api/queue/shuffle', { on }).then((sum) => { onQueue(sum); toast(on ? '随机播放：开' : '随机播放：关'); }, () => {});
-$('#btn-shuffle').addEventListener('click', () => setShuffle(!queue.sum?.shuffle));
-$('#queue-shuffle').addEventListener('change', (e) => setShuffle(e.target.checked));
-$('#queue-repeat').addEventListener('change', (e) => api.post('/api/queue/repeat', { on: e.target.checked }).then(onQueue, () => {}));
+const toggleShuffle = () => api.post('/api/queue/shuffle', { on: !queue.sum?.shuffle }).then(onQueue, () => {});
+$('#btn-shuffle').addEventListener('click', toggleShuffle);
+$('#queue-shuffle').addEventListener('click', toggleShuffle);
+$('#queue-repeat').addEventListener('click', () => api.post('/api/queue/repeat', { on: !queue.sum?.repeat }).then(onQueue, () => {}));
 
 // ---------------- 词汇书 ----------------
 let vocabList = [];
@@ -1133,7 +1142,7 @@ $('#btn-menu').addEventListener('click', () => toggleMenu());
 $('#btn-dict').addEventListener('click', () => setMode('dict'));
 $('#btn-edit').addEventListener('click', () => { toggleMenu(false); setMode('edit'); });
 $('#btn-library').addEventListener('click', openLibrary);
-$('#btn-vocab').addEventListener('click', () => { $('#vocab').hidden = false; loadVocab(); });
+$('#btn-vocab').addEventListener('click', () => { $('#queue').hidden = true; $('#vocab').hidden = false; loadVocab(); });
 $('#btn-source').addEventListener('click', () => { toggleMenu(false); openSource(); });
 $('#btn-settings').addEventListener('click', () => { toggleMenu(false); openSettings(); });
 $('#btn-offset').addEventListener('click', () => {

@@ -26,7 +26,7 @@
       <button class="seg-btn" data-view="focus" title="大字单句（F 切换）">大字</button>
     </div>
     <div class="group">
-      <button class="seg-btn" id="btn-dict" title="辞书模式：点选歌词片段加入词汇书（D）">辞书</button>
+      <button class="seg-btn" id="btn-dict" title="辞书模式：点选歌词片段加入词汇书（D）">记词</button>
       <button class="seg-btn" id="btn-vocab" title="词汇书">词汇书</button>
     </div>
     <button class="pill" id="btn-menu" aria-haspopup="true" title="显示与设置">
@@ -53,7 +53,7 @@
             <svg class="i-pause" viewBox="0 0 24 24" width="40" height="40"><rect x="5" y="3.5" width="5" height="17" rx="1.2" fill="currentColor"/><rect x="14" y="3.5" width="5" height="17" rx="1.2" fill="currentColor"/></svg>
           </button>
           <button id="btn-next" aria-label="下一首"><svg viewBox="0 0 32 24" width="34" height="26"><path d="M3 3.5v17L15.5 12zM17 3.5v17L29.5 12z" fill="currentColor"/></svg></button>
-          <button id="btn-queue" class="mini" aria-label="播放列表" title="播放列表"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 6.500h11M4 12h11M4 17.500h7M17.500 12.500v6.200M17.500 12.500l3-1.200" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="15.800" cy="18.700" r="1.700" fill="currentColor"/></svg></button>
+          <button id="btn-queue" class="mini" aria-label="播放列表" aria-pressed="false" title="播放列表"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 6.500h11M4 12h11M4 17.500h7M17.500 12.500v6.200M17.500 12.500l3-1.200" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="15.800" cy="18.700" r="1.700" fill="currentColor"/></svg></button>
         </div>
       </div>
     </section>
@@ -111,14 +111,13 @@
 <aside class="drawer right" id="queue" hidden>
   <div class="drawer-head">
     <strong>播放列表 <span id="queue-count"></span></strong>
+    <button class="icon-btn toggle" id="queue-shuffle" aria-label="随机播放" aria-pressed="false" title="随机播放"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 7h3.5c2 0 3.2 1 4.3 2.6l2.4 4.8C14.300 16 15.500 17 17.500 17H21M3 17h3.500c1.300 0 2.300-.5 3.100-1.300M21 7h-3.500c-1.300 0-2.300.5-3.100 1.300M18.500 4.500 21 7l-2.500 2.500M18.500 14.500 21 17l-2.500 2.500" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
+    <button class="icon-btn toggle" id="queue-repeat" aria-label="列表循环" aria-pressed="false" title="列表循环"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M17 2l4 4-4 4M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v1a4 4 0 0 1-4 4H3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></button>
+    <span class="head-sep"></span>
     <button class="icon-btn" data-close aria-label="关闭">✕</button>
   </div>
   <div class="drawer-tools">
     <div class="muted" id="queue-label"></div>
-    <div class="row">
-      <label class="chk"><input type="checkbox" id="queue-shuffle"> 随机播放</label>
-      <label class="chk"><input type="checkbox" id="queue-repeat"> 列表循环</label>
-    </div>
   </div>
   <div class="drawer-body" id="queue-list"></div>
 </aside>

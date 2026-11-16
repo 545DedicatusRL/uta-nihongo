@@ -87,11 +87,10 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 #src-badge { font-size: 10.5px; padding: 1px 8px; border-radius: 4px; background: var(--glass); color: var(--fg-2); }
 #src-badge:empty { visibility: hidden; }
 #controls { display: flex; justify-content: center; align-items: center; gap: 6%; margin-top: 1.6vh; }
-/* 随机 / 播放列表：比主按钮小一号、淡一些；开着时用强调色并带一个小点 */
-#controls button.mini { position: relative; opacity: .5; padding: 8px; }
+/* 随机 / 播放列表：比主按钮小一号、淡一些；开着时变亮，外面包一圈半透明的白边 */
+#controls button.mini { opacity: .5; padding: 8px; transition: opacity .15s, background .15s, box-shadow .15s; }
 #controls button.mini:hover { opacity: .9; }
-#controls button.mini.on { opacity: 1; color: var(--accent); }
-#controls button.mini.on::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; }
+#controls button.mini.on, .icon-btn.toggle.on { opacity: 1; color: var(--fg); background: rgba(255, 255, 255, .1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .38); }
 #controls button { color: var(--fg); opacity: .92; display: grid; place-items: center; border-radius: 50%; padding: 6px; }
 #controls button:hover { opacity: 1; background: var(--glass); }
 #controls button:active { transform: scale(.94); }
@@ -264,6 +263,9 @@ ruby { ruby-align: center; }
 .btn:disabled { opacity: .5; cursor: default; }
 .icon-btn { width: 28px; height: 28px; border-radius: 50%; color: var(--fg-2); }
 .icon-btn:hover { background: var(--glass); color: var(--fg); }
+.icon-btn.toggle { display: grid; place-items: center; color: var(--fg-3); transition: color .15s, background .15s, box-shadow .15s; }
+.head-sep { width: 1px; height: 16px; background: var(--line); margin: 0 2px; }
+#queue-label { padding-top: 2px; }
 input[type=search], input[type=text], input[type=password], select, #rp-input { background: rgba(255, 255, 255, .09); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--fg); outline: none; min-width: 0; }
 input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid rgba(255, 255, 255, .7); outline-offset: 1px; }
 select option { background: #2b2636; }
