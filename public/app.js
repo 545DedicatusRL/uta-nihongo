@@ -44,6 +44,8 @@ function setClock(pos, playing = clock.playing) { clock.pos = pos; clock.at = pe
 
 function onState(s) {
   if (s.bye) return showBye();
+  if (s.focus) return window.focus(); // 点了程序坞图标：程序把浏览器叫到了前面，这里尽量让这个窗口排到最上
+  if (s.close) return window.close(); // 界面换到别的浏览器重新打开了：这个窗口自己关掉
   if ('queue' in s) onQueue(s.queue);
   S.player = s;
   const playing = s.state === 'playing';
@@ -470,6 +472,10 @@ function setOffset(v) {
 $$('#offset-pop [data-off]').forEach((b) => b.addEventListener('click', () => setOffset(S.offset + Number(b.dataset.off))));
 $('#offset-reset').addEventListener('click', () => setOffset(0));
 $('#offset-tap').addEventListener('change', (e) => { S.tapAlign = e.target.checked; });
+// 时间对齐的面板一关（不管怎么关的），敲击对齐就跟着关掉，免得之后点歌词还在改时间
+new MutationObserver(() => {
+  if ($('#offset-pop').hidden && S.tapAlign) { S.tapAlign = false; $('#offset-tap').checked = false; }
+}).observe($('#offset-pop'), { attributes: true, attributeFilter: ['hidden'] });
 
 // ---------------- 辞书模式 ----------------
 function setMode(mode) {
@@ -1061,6 +1067,10 @@ async function openSettings() {
     $('#set-model').value = s.model;
     $('#set-key').value = '';
     $('#set-key-state').textContent = s.hasKey ? `已保存（…${s.keyTail}）` : s.envKey ? '使用环境变量里的 Key' : '未设置';
+    const auto = s.browsers[0] ? `自动（${s.browsers[0]}）` : '自动（系统默认浏览器）';
+    $('#set-browser').innerHTML = `<option value="auto">${esc(auto)}</option>` + s.browsers.map((b) => `<option value="${esc(b)}">${esc(b)}</option>`).join('') + '<option value="default">系统默认浏览器（普通标签页）</option>';
+    $('#set-browser').value = s.browser;
+    $('#set-browser-apply').hidden = true;
   } catch { /* 忽略 */ }
 }
 function onAnnPrefChange() {
@@ -1092,6 +1102,16 @@ async function saveSettings() {
   if (key) $('#set-key-state').textContent = `已保存（…${key.slice(-4)}）`;
 }
 $('#set-save').addEventListener('click', () => saveSettings().then(() => toast('设置已保存')).catch((e) => toast(e.message)));
+// 界面窗口用哪个浏览器：选了就保存，下次打开界面时生效；也可以点「现在就换」马上用它重新打开
+$('#set-browser').addEventListener('change', async (e) => {
+  try { await api.post('/api/settings', { browser: e.target.value }); } catch (err) { return toast(`保存失败：${err.message}`); }
+  $('#set-browser-apply').hidden = false;
+  toast('已保存，下次打开界面时生效');
+});
+$('#set-browser-apply').addEventListener('click', async () => {
+  try { await api.post('/api/show', { fresh: true }); } catch (err) { return toast(`打开失败：${err.message}`); }
+  $('#set-browser-apply').hidden = true; // 新窗口出来后，服务端会通知原来的界面窗口自己关掉
+});
 $('#set-ai-run').addEventListener('click', async () => {
   if (!S.song?.lines.length || !S.song.flags?.japanese) return toast('先播放一首有日语歌词的歌');
   const btn = $('#set-ai-run'), state = $('#set-ai-state');
@@ -1154,7 +1174,8 @@ $('#btn-offset').addEventListener('click', () => {
 $$('[data-close]').forEach((b) => b.addEventListener('click', () => { b.closest('.drawer, .modal').hidden = true; }));
 $$('.modal').forEach((m) => m.addEventListener('mousedown', (e) => { if (e.target === m) m.hidden = true; }));
 document.addEventListener('mousedown', (e) => {
-  if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset')) $('#offset-pop').hidden = true;
+  // 敲击对齐开着时，点歌词是在对齐，不算「点到面板外面」，面板留着方便多敲几次
+  if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset') && !(S.tapAlign && e.target.closest('#lyrics, #focus'))) $('#offset-pop').hidden = true;
   if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) toggleMenu(false);
   if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) $('#reading-pop').hidden = true;
   for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar`)) $(`#${id}`).hidden = true;
@@ -1222,7 +1243,8 @@ $('#set-quit').addEventListener('click', async () => {
   try { await api.post('/api/quit', {}); } catch (e) { $('#set-quit').disabled = false; return toast(`退出失败：${e.message}`); }
   showBye();
 });
-const es = new EventSource('/api/events');
+// 地址里带 ?app=1 的是程序自己打开的界面窗口：告诉服务端，它才知道界面窗口还在不在
+const es = new EventSource(`/api/events${new URLSearchParams(location.search).has('app') ? '?app=1' : ''}`);
 es.onmessage = (e) => onState(JSON.parse(e.data));
 es.onerror = () => { if (!S.track) setStatus('和本地服务的连接断开了，请确认程序仍在运行。'); };
 // 服务重启过（比如更新到了新版）：重新连上后自动刷新页面，换上新界面

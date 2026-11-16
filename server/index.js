@@ -13,6 +13,7 @@ import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
 import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
 import { createQueue } from './queue.js';
+import { showUI, installedBrowsers, pickBrowser } from './window.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
@@ -115,6 +116,9 @@ const queue = createQueue({
 });
 
 const sseClients = new Set();
+// 其中由程序自己打开的界面窗口（地址带 ?app=1）。别的页面（比如另外在浏览器里手动打开的）不算，
+// 否则窗口明明关了，程序还以为它开着
+const appClients = new Set();
 music.player.on('state', (s) => {
   if (!sseClients.size) return;
   const msg = `data: ${JSON.stringify({ ...s, lag: Date.now() - s.ts, queue: queue.summary() })}\n\n`;
@@ -122,11 +126,23 @@ music.player.on('state', (s) => {
 });
 
 const routes = {
-  'GET /api/events': (req, res) => {
+  'GET /api/events': (req, res, q) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.write(`data: ${JSON.stringify({ ...music.player.state, queue: queue.summary() })}\n\n`);
     sseClients.add(res);
-    req.on('close', () => sseClients.delete(res));
+    if (q.has('app')) appClients.add(res);
+    req.on('close', () => { sseClients.delete(res); appClients.delete(res); });
+  },
+  // 显示界面（双击桌面图标、点程序坞图标时由启动脚本调用）：界面窗口还开着就把它叫到前面，
+  // 没有就用设置里选的浏览器开一个。fresh=true：不管有没有都新开一个（换浏览器时用）
+  'POST /api/show': async (req, res) => {
+    const { fresh } = await readBody(req);
+    const old = [...appClients];
+    const action = await showUI({ url: `http://localhost:${PORT}`, setting: getSettings().browser, hasWindow: appClients.size > 0, fresh: !!fresh });
+    if (action === 'focused') for (const c of appClients) c.write(`data: ${JSON.stringify({ focus: true })}\n\n`);
+    // 换浏览器重新打开时：等新窗口出来，让原来的界面窗口自己关掉
+    else if (fresh) setTimeout(() => { for (const c of old) c.write(`data: ${JSON.stringify({ close: true })}\n\n`); }, 1500);
+    send(res, 200, { ok: true, action });
   },
   'GET /api/library': async (req, res, q) => send(res, 200, await music.getLibrary(q.get('playlist') || '', q.has('refresh'))),
   'GET /api/playlists': async (req, res) => send(res, 200, await music.getPlaylists()),
@@ -263,7 +279,7 @@ const routes = {
     res.end('﻿' + rows.join('\n'));
   },
 
-  'GET /api/info': (req, res) => send(res, 200, { root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size }),
+  'GET /api/info': (req, res) => send(res, 200, { root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size, windows: appClients.size }),
   // 更新代码后原地重启：退出并让启动脚本重新拉起。不是由启动脚本启动的（如 npm start）则只会退出。
   'POST /api/restart': (req, res) => {
     send(res, 200, { ok: true });
@@ -277,13 +293,17 @@ const routes = {
   },
   'GET /api/settings': (req, res) => {
     const s = getSettings();
-    send(res, 200, { model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY });
+    send(res, 200, {
+      model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY,
+      browser: s.browser || 'auto', browsers: installedBrowsers(), browserInUse: pickBrowser(s.browser),
+    });
   },
   'POST /api/settings': async (req, res) => {
     const body = await readBody(req);
     const patch = {};
     if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey.trim();
     if (typeof body.model === 'string' && body.model.trim()) patch.model = body.model.trim();
+    if (typeof body.browser === 'string' && (['auto', 'default'].includes(body.browser) || installedBrowsers().includes(body.browser))) patch.browser = body.browser;
     saveSettings(patch);
     send(res, 200, { ok: true });
   },

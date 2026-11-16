@@ -3,7 +3,9 @@
 #   - 双击这个文件 / 在终端里运行：程序跑在这个终端窗口里，关闭窗口即退出
 #   - 从桌面图标启动（UTA_BACKGROUND=1）：不开终端，在后台运行；在「设置 → 更多设置」里退出，
 #     或在程序坞的图标上右键退出。运行记录写在 data/app.log
-cd "$(dirname "$0")"
+SCRIPT="$0"   # 函数里的 $0 是函数名，先在外面记下脚本自己的路径
+main() {
+cd "$(dirname "$SCRIPT")"
 BG="${UTA_BACKGROUND:-}"
 if [ -n "$BG" ]; then
   mkdir -p data
@@ -29,25 +31,16 @@ fi
 [ -d node_modules ] || npm install
 PORT="${PORT:-3939}"
 URL="http://localhost:$PORT"
-open_ui() {
-  if [ -d "/Applications/Google Chrome.app" ]; then
-    open -na "Google Chrome" --args --app="$URL" --window-size=1100,680
-  else
-    open "$URL"
-  fi
-}
+# 显示界面：交给程序自己决定——界面窗口还开着就把它叫到前面，没有就用设置里选的浏览器开一个
+show_ui() { curl -s -m 10 -X POST "$URL/api/show" >/dev/null 2>&1; }
 HERE="$(pwd -P)"
 # 端口上已经有「唱歌学日语」在运行
 if curl -s -m 2 "$URL/api/settings" | grep -q '"hasKey"'; then
   INFO="$(curl -s -m 2 "$URL/api/info")"
   if echo "$INFO" | grep -qF "\"root\":\"$HERE\""; then
-    # 就是这一份：只打开界面。后台运行时如果界面窗口还开着，就只把浏览器切到前面，不再多开一个
-    echo "唱歌学日语 已在运行，直接打开界面。"
-    if [ -n "$BG" ] && [ -d "/Applications/Google Chrome.app" ] && ! echo "$INFO" | grep -q '"clients":0'; then
-      open -a "Google Chrome"
-    else
-      open_ui
-    fi
+    # 就是这一份：只显示界面
+    echo "唱歌学日语 已在运行，显示界面。"
+    show_ui
     exit 0
   fi
   # 是另一份（别的文件夹里的副本或旧版）：停掉它，换成这一份
@@ -58,7 +51,8 @@ if curl -s -m 2 "$URL/api/settings" | grep -q '"hasKey"'; then
     sleep 0.2
   done
 fi
-( sleep 1.5; open_ui ) &
+# 等程序起来后显示界面
+( for i in {1..80}; do sleep 0.25; curl -s -m 1 "$URL/api/info" | grep -q '"root"' && break; done; show_ui ) &
 # 退出码 75 = 程序请求重启（更新到新版时用）：原地重新启动
 while true; do
   PORT="$PORT" node server/index.js
@@ -67,3 +61,5 @@ while true; do
 done
 # 程序已经结束（在设置里点了退出等）。确认端口上确实没有在运行的了，再关掉桌面的小应用
 if [ -n "$BG" ] && ! curl -s -m 1 "$URL/api/info" | grep -q '"root"'; then quit_app; fi
+}
+main "$@"; exit

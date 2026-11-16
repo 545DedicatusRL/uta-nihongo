@@ -35,7 +35,8 @@ export function safeName(s) {
 }
 
 // ---- 设置 ----
-const DEFAULT_SETTINGS = { apiKey: '', model: 'claude-opus-5-5' };
+// browser：界面窗口用哪个浏览器打开（'auto' | 浏览器名 | 'default'），见 window.js
+const DEFAULT_SETTINGS = { apiKey: '', model: 'claude-opus-5-5', browser: 'auto' };
 export function getSettings() {
   return { ...DEFAULT_SETTINGS, ...readJSON('settings.json', {}) };
 }
