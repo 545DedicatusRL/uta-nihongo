@@ -335,6 +335,41 @@ function isContentWord(t) {
   return t.pos === '副詞' || t.pos === '連体詞' || t.pos === '感動詞';
 }
 
+// ---------------- 变形的尾巴 ----------------
+// 动词、形容词变形以后，分词器会把它拆成「词干 + 尾巴」：走って = 走っ + て，走らなかった = 走ら + なかっ + た，
+// 食べてしまった = 食べ + て + しまっ + た。记词时把词干连同尾巴一起选中，要记的仍然是原形（走る、食べる），
+// 所以这里把尾巴标出来（tok.f）。算作尾巴的：
+//   助动词（た、ない、ます、たい、う、だ…）
+//   接在活用形后面的助词：て / で / ば / ながら / つつ / たり / だり，以及 て 后面的 も / は
+//   接尾的动词（れる / られる / せる / させる）
+//   て 后面的补助动词（いる、しまう、くる、いく、みる、くれる、ください…）和它们的缩约形（てる、ちゃう、とく…）
+//   样态的 そう
+// 「走り続ける」这种复合动词里的后一个动词不算尾巴——它和前面合起来是另一个词。
+const TAIL_PARTICLES = new Set(['て', 'で', 'ば', 'ながら', 'つつ']);
+const TAIL_CONTRACTED = new Set(['てる', 'でる', 'ちゃう', 'じゃう', 'とく', 'どく', 'ちまう', 'じまう']);
+function tailFlags(raw) {
+  const out = [];
+  let afterTe = false; // 上一个是不是接续的 て / で
+  raw.forEach((t, i) => {
+    const s = t.surface_form, d1 = t.pos_detail_1;
+    let f = false, te = false;
+    if (i > 0) {
+      if (t.pos === '助動詞') f = true;
+      else if (t.pos === '助詞') {
+        if (d1 === '接続助詞' && TAIL_PARTICLES.has(s)) { f = true; te = s === 'て' || s === 'で'; }
+        else if (d1 === '並立助詞' && (s === 'たり' || s === 'だり')) f = true;
+        else if (d1 === '係助詞' && (s === 'も' || s === 'は') && afterTe) f = true;
+      } else if (t.pos === '動詞') {
+        if (d1 === '接尾') f = true;
+        else if (d1 === '非自立' && (afterTe || TAIL_CONTRACTED.has(t.basic_form))) { f = true; te = s === 'て' || s === 'で'; }
+      } else if (t.pos === '名詞' && d1 === '接尾' && t.pos_detail_2 === '助動詞語幹') f = true;
+    }
+    out.push(f);
+    afterTe = te;
+  });
+  return out;
+}
+
 // ---------------- 主入口 ----------------
 // lines: [{ t, end, text, zh?, roma?, ct? }]；opts: { kana, meta, userDict }
 export async function analyzeLyrics(lines, opts = {}) {
@@ -348,6 +383,7 @@ export async function analyzeLyrics(lines, opts = {}) {
     stats,
     lines: lines.map((line) => {
       const raw = tokenizer.tokenize(line.text);
+      const tails = tailFlags(raw);
       let i0 = 0;
       const tokens = raw.map((t, ri) => {
         const s = t.surface_form;
@@ -360,6 +396,7 @@ export async function analyzeLyrics(lines, opts = {}) {
           raw: [ri],
         };
         if (isContentWord(t)) tok.v = 1;
+        if (tails[ri]) tok.f = 1;
         if (t.word_type === 'UNKNOWN' && [...s].some(isKanji)) tok.u = 1; // 分词器不认识的词：查到的词条要和读音对得上才用
         if (/^\s+$/.test(s)) tok.sp = 1;
         i0 += s.length;

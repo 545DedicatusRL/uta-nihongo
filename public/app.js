@@ -802,10 +802,29 @@ function selectionInfo() {
       else reading += toHira(seg.t.slice(Math.max(s.a, s0) - s0, Math.min(s.b, s1) - s0));
     }
   }
-  const one = toks.length === 1 && toks[0].i0 === s.a && toks[0].i0 + toks[0].s.length === s.b ? toks[0] : null;
-  return { line, text: line.text.slice(s.a, s.b), reading, tok: one };
+  const text = line.text.slice(s.a, s.b);
+  return { line, text, reading, ...dictForm(toks, s, text) };
+}
+// 选中的这一段该记成什么：
+//   走って / 走らなかった / 走っている → 走る（词干后面跟着的都是变形的尾巴，见服务端的 tailFlags）
+//   走り続けた → 走り続ける（最后一个不是尾巴的词还原成原形，前面的照原样）
+//   勉強した → 勉強（する 前面是名词：词典里收的是名词）
+// 返回 { base: 原形, head: 原形完全来自这一个词时是它（查词典时带上它的读音） }；没选在词的边界上就不还原。
+function dictForm(toks, s, text) {
+  const none = { base: text, head: null };
+  if (!toks.length || toks[0].i0 !== s.a) return none;
+  const lastTok = toks[toks.length - 1];
+  if (lastTok.i0 + lastTok.s.length !== s.b) return none;
+  let k = toks.length - 1;
+  while (k > 0 && toks[k].f) k--;
+  const stem = toks[k];
+  if (toks.length > 1 && stem.f) return none; // 选中的全是尾巴
+  const before = toks.slice(0, k).map((t) => t.s).join('');
+  if (stem.b === 'する' && k > 0 && toks[k - 1].pos === '名') return { base: before, head: k === 1 ? toks[0] : null };
+  return { base: before + stem.b, head: k === 0 ? stem : null };
 }
 let dictSeq = 0;
+let dictHit = null; // 底栏里现在这个词查到的词条（加入词汇书时取它的级别）
 function updateDictBar(fresh) {
   const has = !!S.sel;
   $('#db-hint').hidden = has;
@@ -814,20 +833,25 @@ function updateDictBar(fresh) {
   const info = selectionInfo();
   const w = $('#db-word'), r = $('#db-reading'), m = $('#db-meaning');
   if (fresh) { w.dataset.dirty = r.dataset.dirty = m.dataset.dirty = ''; }
-  const useBase = info.tok && info.tok.b !== info.tok.s && S.sel.form !== 'surface';
-  const word = useBase ? info.tok.b : info.text;
+  const canBase = info.base !== info.text;
+  const useBase = canBase && S.sel.form !== 'surface';
+  const word = useBase ? info.base : info.text;
+  // 原形来自一个带汉字的词：连同歌词里实际唱的读音一起查（辛い 是 からい 还是 つらい）
+  const key = useBase && info.head?.h && info.head.b === word ? dictKey(info.head) : word;
   if (!w.dataset.dirty) w.value = word;
   if (!r.dataset.dirty) r.value = useBase ? '' : info.reading;
   if (!m.dataset.dirty) m.value = '';
   const ai = info.line.ai?.vocab.find((v) => v.b === word || v.text === info.text);
   if (ai && !m.dataset.dirty) m.value = ai.zh;
   if (ai && useBase && !r.dataset.dirty) r.value = ai.r;
-  const swap = info.tok && info.tok.b !== info.tok.s
-    ? `　<a data-form="${useBase ? 'surface' : 'base'}">改用${useBase ? `歌词里的形式「${esc(info.text)}」` : `原形「${esc(info.tok.b)}」`}</a>` : '';
+  const swap = canBase
+    ? `　<a data-form="${useBase ? 'surface' : 'base'}">改用${useBase ? `歌词里的形式「${esc(info.text)}」` : `原形「${esc(info.base)}」`}</a>` : '';
   $('#db-info').innerHTML = `查询中…${swap}`;
   const seq = ++dictSeq;
-  lookup(word).then((d) => {
+  dictHit = null;
+  lookup(key).then((d) => {
     if (seq !== dictSeq) return;
+    if (d && !d.miss) dictHit = { word, d };
     if (!d || d.miss) {
       if (useBase && !r.dataset.dirty && !r.value) r.value = info.reading;
       $('#db-info').innerHTML = `词典里没有查到「${esc(word)}」，可以自己填写释义。${swap}`;
@@ -863,7 +887,7 @@ async function addVocab() {
   if (!word) return;
   const entry = {
     word, reading: $('#db-reading').value.trim(), meaning: $('#db-meaning').value.trim(),
-    surface: info.text, level: S.dict[word]?.lv || '',
+    surface: info.text, level: (dictHit?.word === word ? dictHit.d.lv : S.dict[word]?.lv) || '',
     line: info.line.text, zh: info.line.zh || '', lineTime: info.line.t,
     song: { pid: S.track.pid, name: S.track.name, artist: S.track.artist },
   };
