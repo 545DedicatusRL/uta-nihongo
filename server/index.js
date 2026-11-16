@@ -169,7 +169,7 @@ const routes = {
     res.writeHead(200, { 'Content-Type': art.type, 'Cache-Control': 'max-age=86400' });
     fs.createReadStream(art.file).pipe(res);
   },
-  // 「仅日文」的手动标记（按歌手）。ja: true / false = 标为日文 / 不是日文，null = 恢复自动判断；all = 整份替换
+  // 「仅日文」的手动标记（按歌手）。ja: true = 标为日文，其他 = 去掉标记、恢复自动判断；all = 整份替换
   'GET /api/marks': (req, res) => send(res, 200, getMarks()),
   'POST /api/marks': async (req, res) => {
     const { artist, ja, all } = await readBody(req);
@@ -178,13 +178,13 @@ const routes = {
       marks = {};
       for (const m of Object.values(all)) {
         const name = String(m?.name || '').trim();
-        if (name) marks[name.toLowerCase()] = { name, ja: !!m.ja, at: Number(m.at) || Date.now() };
+        if (name && m.ja) marks[name.toLowerCase()] = { name, ja: true, at: Number(m.at) || Date.now() };
       }
     } else {
       const name = String(artist || '').trim();
       if (!name) return send(res, 400, { error: '缺少歌手名' });
-      if (ja === null || ja === undefined) delete marks[name.toLowerCase()];
-      else marks[name.toLowerCase()] = { name, ja: !!ja, at: Date.now() };
+      if (ja) marks[name.toLowerCase()] = { name, ja: true, at: Date.now() };
+      else delete marks[name.toLowerCase()];
     }
     saveMarks(marks);
     send(res, 200, marks);

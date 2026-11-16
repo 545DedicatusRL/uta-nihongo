@@ -991,7 +991,8 @@ const lib = { all: null, tracks: null, byPid: null, loading: false, shown: 0, fi
 //   4. 同一位歌手只要有一首符合上面任意一条，他的其他歌也算（歌名被译成英文 / 罗马字的那些）
 // 流派明确是其他语种的（Mandopop、K-Pop…）一律不算，免得被第 4 条带进来。
 //   5. 歌手在内置的日本歌手名单里（ja-artists.js）——元数据全是英文、流派又是 Rock 之类的歌手靠这一条
-//   6. 用户手动标过的歌手（lib.marks，存在服务端）说了算，盖过上面所有规则
+//   6. 用户手动标为日文的歌手（lib.marks，存在服务端）——上面的规则漏掉的靠这一条补
+//      只能补，不能反过来：自动认出来的日文歌不提供「标为不是日文」
 const JA_GENRE = /^(anime|j-|kayokyoku|enka|japan)|vocaloid/i;
 const NOT_JA_GENRE = /mandopop|cantopop|c-pop|k-pop|chinese|korean|taiwan/i;
 const KANA = /[぀-ヿ]/;
@@ -1018,9 +1019,8 @@ function markJapanese(tracks) {
   }
   for (const t of tracks) {
     if (!t.ja && !NOT_JA_GENRE.test(t.genre || '') && jaArtists.has(artistKey(t))) t.ja = true;
-    const mark = lib.marks[artistKey(t)];
-    t.manual = !!mark;
-    if (mark) t.ja = mark.ja;
+    t.manual = !!lib.marks[artistKey(t)]?.ja;
+    if (t.manual) t.ja = true;
   }
   return tracks;
 }
@@ -1108,9 +1108,7 @@ function pumpCovers() {
   }
 }
 
-const jaTitle = (t) => (t.manual
-  ? `手动标记：${t.ja ? '日文歌手' : '不是日文歌手'}。点一下恢复自动判断`
-  : t.ja ? `「${t.artist}」不是日文歌手？点一下标出来` : `把「${t.artist}」标为日文歌手`);
+const jaTitle = (t) => (t.manual ? `手动标为日文歌手。点一下取消` : `把「${t.artist}」标为日文歌手`);
 function trackRow(t, inAlbum, prev) {
   const sub = inAlbum ? (t.artist !== lib.album.artist ? t.artist : '') : [t.artist, t.album].filter(Boolean).join(' — ');
   // 多碟的专辑：每张碟开头加一行小标题（曲序是每张碟各自从 1 数的）
@@ -1118,7 +1116,8 @@ function trackRow(t, inAlbum, prev) {
   return `${disc}<div class="track lib${inAlbum ? ' num' : ''}${sub ? '' : ' one'}${S.track?.pid === t.pid ? ' cur' : ''}" data-pid="${esc(t.pid)}">`
     + (inAlbum ? `<div class="no">${t.no || ''}</div>` : '')
     + `<div class="n">${esc(t.name)}</div>`
-    + (t.artist.trim() ? `<button class="ja-btn${t.ja ? ' on' : ''}${t.manual ? ' manual' : ''}" data-act="ja" title="${esc(jaTitle(t))}" aria-pressed="${!!t.ja}">日</button>` : '')
+    // 「日」只出现在没被认成日文的歌上（点了标为日文），和手动标过的歌上（点了取消）；自动认出来的日文歌没有这个按钮
+    + (t.artist.trim() && (t.manual || !t.ja) ? `<button class="ja-btn${t.manual ? ' manual' : ''}" data-act="ja" title="${esc(jaTitle(t))}" aria-pressed="${t.manual}">日</button>` : '')
     + `<div class="d">${fmt(t.duration)}</div>`
     + (sub ? `<div class="a">${esc(sub)}</div>` : '')
     + '</div>';
@@ -1197,8 +1196,8 @@ function closeAlbum(anim = true) {
 }
 $('#lib-album').addEventListener('click', (e) => { if (e.target.closest('[data-act="back"]')) closeAlbum(); });
 
-// ---- 手动标记：这位歌手算不算日文歌手 ----
-// ja: true / false = 标为日文 / 不是日文，null = 去掉标记、恢复自动判断
+// ---- 手动标记：把这位歌手标为日文歌手 ----
+// ja: true = 标为日文，null = 去掉标记、恢复自动判断
 async function setMark(artist, ja, undo = true) {
   const name = artist.trim();
   const prev = lib.marks[name.toLowerCase()];
@@ -1208,15 +1207,15 @@ async function setMark(artist, ja, undo = true) {
   renderMarks();
   if (!undo) return;
   const n = lib.all ? lib.all.filter((t) => artistKey(t) === name.toLowerCase()).length : 0;
-  const what = ja === null ? `「${name}」已恢复自动判断` : `已把「${name}」标为${ja ? '日文歌手' : '不是日文歌手'}${n > 1 ? `（${n} 首）` : ''}`;
-  toast(what, { label: '撤销', run: () => setMark(name, prev ? prev.ja : null, false).then(() => toast('已撤销')) });
+  const what = ja ? `已把「${name}」标为日文歌手${n > 1 ? `（${n} 首）` : ''}` : `已取消「${name}」的标记`;
+  toast(what, { label: '撤销', run: () => setMark(name, prev ? true : null, false).then(() => toast('已撤销')) });
 }
 // 设置里的名单：看得到标过谁，可以逐个去掉或全部清除
 function renderMarks() {
   const list = Object.values(lib.marks).sort((a, b) => b.at - a.at);
-  $('#set-marks-info').textContent = list.length ? `标过 ${list.length} 位歌手，点 × 恢复自动判断` : '还没有。在资料库里把鼠标移到一首歌上，点右边的「日」。';
+  $('#set-marks-info').textContent = list.length ? `手动标为日文歌手的有 ${list.length} 位，点 × 取消` : '还没有。「仅日文」漏掉的歌：取消勾选后把鼠标移到那首歌上，点右边的「日」。';
   $('#set-marks-clear').hidden = !list.length;
-  $('#set-marks').innerHTML = list.map((m) => `<span class="mark-chip"><b>${esc(m.name)}</b><i>${m.ja ? '日文' : '不是日文'}</i><button data-artist="${esc(m.name)}" aria-label="恢复自动判断" title="恢复自动判断">×</button></span>`).join('');
+  $('#set-marks').innerHTML = list.map((m) => `<span class="mark-chip"><b>${esc(m.name)}</b><button data-artist="${esc(m.name)}" aria-label="取消标记" title="取消标记">×</button></span>`).join('');
 }
 async function replaceMarks(all) {
   try { lib.marks = await api.post('/api/marks', { all }); } catch (e) { return toast(`保存失败：${e.message}`); }
@@ -1239,7 +1238,7 @@ $('#lib-list').addEventListener('click', (e) => {
   if (!row) return;
   if (e.target.closest('.ja-btn')) {
     const t = lib.filtered.find((x) => x.pid === row.dataset.pid);
-    if (t) setMark(t.artist, t.manual ? null : !t.ja);
+    if (t) setMark(t.artist, t.manual ? null : true);
     return;
   }
   // 现在筛选出来的这份列表就是播放列表：从点的这首开始，播完自动接下一首

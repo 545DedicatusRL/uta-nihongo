@@ -67,9 +67,10 @@ export function saveUserDict(d) {
   writeJSON('userdict.json', d);
 }
 
-// ---- 「仅日文」的手动标记：{ 歌手名小写: { name, ja, at } } ----
+// ---- 「仅日文」的手动标记：{ 歌手名小写: { name, ja: true, at } } ----
+// 只有「标为日文」这一个方向；早先版本存过的「不是日文」读出来时直接丢掉
 export function getMarks() {
-  return readJSON('ja-marks.json', {});
+  return Object.fromEntries(Object.entries(readJSON('ja-marks.json', {})).filter(([, m]) => m && m.ja));
 }
 export function saveMarks(m) {
   writeJSON('ja-marks.json', m);
