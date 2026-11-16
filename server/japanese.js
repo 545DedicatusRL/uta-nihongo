@@ -335,6 +335,54 @@ function isContentWord(t) {
   return t.pos === '副詞' || t.pos === '連体詞' || t.pos === '感動詞';
 }
 
+// ---------------- みたい（像…一样） ----------------
+// 分词器认得「みたいな / みたいに」，但下面两种会被它当成「見る + たい」（想看）：
+//   A. 口语的「みたく」：走馬灯みたく走って → み（見る）+ たく
+//   B. 「夢みたいだ」：词典里有「夢みる」这个动词，于是成了 夢み + たい + だ
+// 「見たい」和「みたい」都是真实的词，读音也一样，查词典分不出来，只能看前后文：
+//   A. 假名写的 み + たく，前面直接是名词或动词原形（没有 を / が，也不是 て），
+//      后面又不是 て / ない / なる 这类「たい 的变形还要继续」的东西 → みたい
+//      （星がみたくて、やってみたくなる、みたくない 都还是「想看」）
+//   B. み + たい 后面跟着 だ / です / な / に，或者到此为止——「想…」后面不会直接跟这些 → みたい
+// 汉字写的「見たく」一律不动。认成 みたい 以后，它和分词器自己认出来的 みたい 是同一种词。
+const toKata = (s) => s.replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60));
+const mitaiTok = (surface) => ({
+  surface_form: surface, basic_form: 'みたい', pos: '名詞', pos_detail_1: '非自立', pos_detail_2: '助動詞語幹', pos_detail_3: '*',
+  conjugated_type: '*', conjugated_form: '*', reading: toKata(surface), pronunciation: toKata(surface), word_type: 'KNOWN',
+});
+const NOT_NOUN_MIRU = new Set(['試みる', '顧みる', '省みる', '鑑みる']); // 这些的 み 是动词自己的一部分，不是「名词 + みる」
+function fixMitai(raw) {
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    const t = raw[i], tai = raw[i + 1], next = raw[i + 2], prev = out[out.length - 1];
+    const isMiTai = tai && tai.pos === '助動詞' && tai.basic_form === 'たい'
+      && t.pos === '動詞' && t.surface_form.endsWith('み') && t.basic_form.endsWith('みる');
+    if (isMiTai) {
+      const stem = t.surface_form.slice(0, -1); // 「夢み」里的「夢」；单独的「み」则是空的
+      const stemIsNoun = stem && t.basic_form === `${stem}みる` && !NOT_NOUN_MIRU.has(t.basic_form) && /^[㐀-䶿一-鿿々ァ-ヶー]+$/.test(stem);
+      const afterWord = prev && (prev.pos === '名詞' || ((prev.pos === '動詞' || prev.pos === '形容詞') && prev.conjugated_form === '基本形')
+        || (prev.pos === '助動詞' && /^(た|だ|ない)$/.test(prev.basic_form)));
+      const goesOn = next && (next.pos === '助動詞' || (next.pos === '助詞' && /^(て|は|も)$/.test(next.surface_form)) || /^(なる|ない|無い)$/.test(next.basic_form));
+      const copula = next && ((next.pos === '助動詞' && /^(だ|です)$/.test(next.basic_form)) || (next.pos === '助詞' && /^(に|な)$/.test(next.surface_form)));
+      const ends = !next || next.pos === '記号';
+      let hit = '';
+      if (tai.surface_form === 'たく' && !stem && afterWord && !goesOn) hit = 'みたく';
+      else if (tai.surface_form === 'たい' && (stem ? stemIsNoun && (copula || ends) : afterWord && copula)) hit = 'みたい';
+      if (hit) {
+        if (stem) {
+          const r = (t.reading || '').slice(0, -1);
+          out.push({ ...t, surface_form: stem, basic_form: stem, pos: '名詞', pos_detail_1: '一般', pos_detail_2: '*', conjugated_type: '*', conjugated_form: '*', reading: r, pronunciation: r });
+        }
+        out.push(mitaiTok(hit));
+        i++;
+        continue;
+      }
+    }
+    out.push(t);
+  }
+  return out;
+}
+
 // ---------------- 变形的尾巴 ----------------
 // 动词、形容词变形以后，分词器会把它拆成「词干 + 尾巴」：走って = 走っ + て，走らなかった = 走ら + なかっ + た，
 // 食べてしまった = 食べ + て + しまっ + た。记词时把词干连同尾巴一起选中，要记的仍然是原形（走る、食べる），
@@ -394,7 +442,7 @@ export async function analyzeLyrics(lines, opts = {}) {
   return {
     stats,
     lines: lines.map((line) => {
-      const raw = tokenizer.tokenize(line.text);
+      const raw = fixMitai(tokenizer.tokenize(line.text));
       const tails = tailFlags(raw);
       let i0 = 0;
       const tokens = raw.map((t, ri) => {
