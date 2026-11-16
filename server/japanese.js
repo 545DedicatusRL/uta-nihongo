@@ -242,6 +242,43 @@ function mergeCompounds(tokens) {
   }
 }
 
+// 分词器的词典里没有的汉字写法（騒めく、閃めく…）会被拆成「不认识的汉字 + めく」，
+// 之后只拿前面那个单字去查词典，查到的是不相干的词（騒 → そう・骚体）。这里把它们合回一个动词。
+const SUFFIX_VERBS = new Set(['めく', 'ぶる', 'がる', 'じみる', 'ばむ', 'づく', 'ぐむ']);
+function mergeUnknownVerbs(tokens, raw) {
+  for (let i = tokens.length - 2; i >= 0; i--) {
+    const A = tokens[i], B = tokens[i + 1];
+    if (A.raw.length !== 1 || B.raw.length !== 1) continue;
+    const a = raw[A.raw[0]], b = raw[B.raw[0]];
+    if (a.word_type !== 'UNKNOWN' || ![...a.surface_form].every(isKanji)) continue;
+    if (b.pos !== '動詞' || !SUFFIX_VERBS.has(b.basic_form) || !/^[ぁ-ゖ]+$/.test(b.surface_form)) continue;
+    tokens.splice(i, 2, { s: A.s + B.s, i0: A.i0, b: A.s + b.basic_form, pos: '动', segs: [...A.segs, ...B.segs], v: 1, u: 1, raw: [...A.raw, ...B.raw] });
+  }
+}
+// 查词典时用的读音提示：辞书形和歌词里的写法开头相同的那一段，实际唱的是什么
+// （辛い 唱的是 つら 还是 から、開いた 的 開 是 あ 还是 ひら）。同一个写法有好几个词条时靠它来选。
+// 只有带汉字、而且读音已知的词才有提示。
+function readingHint(tok) {
+  if (![...tok.b].some(isKanji)) return '';
+  // 来る 变形时词干的读音会变（き / こ），和辞书形的 くる 对不上，反而会撞上别的词（来る＝きたる）
+  if (tok.b.endsWith('来る') && tok.s !== tok.b) return '';
+  let n = 0;
+  while (n < tok.b.length && n < tok.s.length && tok.b[n] === tok.s[n]) n++;
+  let h = '', pos = 0, kanji = false;
+  for (const g of tok.segs) {
+    if (pos >= n) break;
+    const end = pos + g.t.length;
+    const hasKanji = [...g.t].some(isKanji);
+    if (hasKanji) {
+      if (!g.r || end > n) break; // 读音不知道，或者这一段跨过了词干：到此为止
+      h += toHira(g.r);
+      kanji = true;
+    } else h += toHira(g.t.slice(0, Math.max(0, n - pos)));
+    pos = end;
+  }
+  return kanji ? h : '';
+}
+
 // ---------------- QQ 音乐的 [kana:…] 读音 ----------------
 // 返回 Map<行文本, [{ i: 行内字符下标, n: 覆盖汉字数, r: 读音 }]>，数量对不上则返回 null
 export function parseQQKana(kana) {
@@ -323,10 +360,12 @@ export async function analyzeLyrics(lines, opts = {}) {
           raw: [ri],
         };
         if (isContentWord(t)) tok.v = 1;
+        if (t.word_type === 'UNKNOWN' && [...s].some(isKanji)) tok.u = 1; // 分词器不认识的词：查到的词条要和读音对得上才用
         if (/^\s+$/.test(s)) tok.sp = 1;
         i0 += s.length;
         return tok;
       });
+      mergeUnknownVerbs(tokens, raw);
       mergeCompounds(tokens);
 
       if (line.roma) {
@@ -348,7 +387,11 @@ export async function analyzeLyrics(lines, opts = {}) {
           stats.user++;
         }
       }));
-      for (const tok of tokens) tok.r = tok.segs.map((g) => (g.r !== undefined ? g.r : toHira(g.t))).join('');
+      for (const tok of tokens) {
+        tok.r = tok.segs.map((g) => (g.r !== undefined ? g.r : toHira(g.t))).join('');
+        const h = tok.v ? readingHint(tok) : '';
+        if (h) tok.h = h;
+      }
 
       // 语法点是在原始分词上匹配的，合并过词之后把下标换算过来
       const rawToTok = [];

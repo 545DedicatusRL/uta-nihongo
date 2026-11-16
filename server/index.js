@@ -274,7 +274,8 @@ const routes = {
 
   'POST /api/dict': async (req, res) => {
     const { words, cachedOnly } = await readBody(req);
-    send(res, 200, await lookupWords((words || []).slice(0, 40), !!cachedOnly));
+    // 只读本地缓存时不联网，一次可以把整首歌的词都问了
+    send(res, 200, await lookupWords((words || []).slice(0, cachedOnly ? 5000 : 40), !!cachedOnly));
   },
   'POST /api/ai/annotate': async (req, res) => {
     const { source, lines } = await readBody(req);

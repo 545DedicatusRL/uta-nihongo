@@ -528,8 +528,10 @@ function annotationsFor(line) {
     } else {
       line.tokens.forEach((tok, ti) => {
         if (!tok.v) return;
-        const d = S.dict[tok.b];
+        const d = S.dict[dictKey(tok)];
         if (!d || d.miss || !levelOK(d.lv)) return;
+        // 分词器不认识的词，查到的词条读音又和实际唱的对不上：多半是拆错后撞上了别的词（騒 → そう・骚体），不标
+        if (tok.u && d.fit === false) return;
         // 既没有级别、也不是常用词、中文词典里也查不到：多半是撞上了不相干的冷僻词条（如 イイ → Iran-Iraq）
         if (!d.lv && !d.common && !d.zh) return;
         // 纯假名写的动词（如可能形「なれる」）在词典里常对到别的词，宁可不标
@@ -576,17 +578,32 @@ function paintAnnotations() {
   const fa = $('#f-ann'); fa.className = `f-ann ${prefs.annStyle}`; fa.innerHTML = html;
 }
 
-// 词典数据（Jisho）：先取本地缓存，再分批补全
+// 查词典用的键：带汉字的词连同「实际唱的读音」一起查（辛い|つら），同一个写法有几个词条时才选得对
+const dictKey = (tok) => (tok.h ? `${tok.b}|${tok.h}` : tok.b);
+// 词典数据（Jisho + 有道）。歌词先显示，词典在后面补，不拖慢歌词：
+//   1. 本地缓存里有的一次全取回来（不联网），听过的歌立刻就有标注
+//   2. 剩下的联网分批查，每一批都先查离现在唱到的地方最近的词——中途拖动进度，下一批就跟着换地方
 async function fetchDict(token) {
-  const words = [...new Set(S.song.lines.flatMap((l) => l.tokens.filter((t) => t.v).map((t) => t.b)))];
+  const where = new Map(); // 键 → 它出现在哪几行
+  S.song.lines.forEach((l, li) => {
+    for (const t of l.tokens) if (t.v) { const k = dictKey(t); if (!where.has(k)) where.set(k, []); where.get(k).push(li); }
+  });
   try {
-    Object.assign(S.dict, await api.post('/api/dict', { words: words.slice(0, 40) }));
+    Object.assign(S.dict, await api.post('/api/dict', { words: [...where.keys()], cachedOnly: true }));
   } catch { /* 离线时没有词汇标注，其余功能不受影响 */ }
   if (token !== S.loadToken) return;
   paintAnnotations();
-  for (let i = 40; i < words.length; i += 20) {
-    try { Object.assign(S.dict, await api.post('/api/dict', { words: words.slice(i, i + 20) })); } catch { return; }
+  const todo = new Set([...where.keys()].filter((k) => !S.dict[k] || S.dict[k].stale));
+  while (todo.size) {
+    const cur = Math.max(S.active, 0);
+    // 还没唱到的行按远近排，已经唱过的排在最后
+    const dist = (k) => Math.min(...where.get(k).map((li) => (li >= cur ? li - cur : 10000 + cur - li)));
+    const batch = [...todo].map((k) => [k, dist(k)]).sort((a, b) => a[1] - b[1]).slice(0, 12).map((x) => x[0]);
+    let got;
+    try { got = await api.post('/api/dict', { words: batch }); } catch { return; }
     if (token !== S.loadToken) return;
+    for (const k of batch) todo.delete(k); // 这次没查成的（网络问题）不反复重试，下次打开这首歌再查
+    Object.assign(S.dict, got);
     paintAnnotations();
   }
 }
