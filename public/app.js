@@ -169,18 +169,23 @@ function jpHTML(line, li) {
     let ci = tok.i0, inner = '';
     tok.segs.forEach((seg, si) => {
       const c0 = ci;
-      let chars = '';
-      for (const ch of seg.t) { chars += `<span class="ch" data-c="${ci}">${esc(ch)}</span>`; ci += ch.length; }
       const isK = KANJI.test(seg.t);
-      let timing = '';
-      if (line.ct && line.ct[c0]) {
-        const t0 = line.ct[c0][0], t1 = (line.ct[ci - 1] || line.ct[c0])[1];
-        // --lt：唱到这个词时「抬起来」的弹簧动画总共多长。弹簧是慢慢起步、走到一半多就基本到位、
-        // 后面是很长的收尾，所以总时长取这个词时长的两倍多：词唱完时大致抬到位，短词之间的抬起会互相叠在一起
-        timing = ` data-t0="${t0}" data-t1="${t1}" style="--lt:${clamp((t1 - t0) * 2.3, 0.6, 1.6).toFixed(2)}s"`;
+      const ruby = isK && !!seg.r;
+      // 逐字歌词里的「填充单位」（class="fu"）：按时间填色、唱到时抬起来的最小单位。
+      //   - 普通的字：一个字一个单位，于是一个词里的字是一个接一个抬起来的，像一道波
+      //   - 带注音的汉字：整个汉字连同上面的假名是一个单位（拆开的话注音就跟不上了）
+      // --lt：抬起来的弹簧动画总共多长。弹簧起步慢、收尾长，所以取这个字时长的两倍多，
+      // 最短也有 0.75 秒：相邻的字一个还没抬完、下一个已经起步，叠在一起才不显得一格一格的
+      const unit = (t0, t1) => ` data-t0="${t0}" data-t1="${t1}" style="--lt:${clamp((t1 - t0) * 2.6, 0.75, 1.6).toFixed(2)}s"`;
+      let chars = '';
+      for (const ch of seg.t) {
+        const tm = !ruby && line.ct?.[ci];
+        chars += `<span class="ch${tm ? ' fu' : ''}" data-c="${ci}"${tm ? unit(tm[0], tm[1]) : ''}>${esc(ch)}</span>`;
+        ci += ch.length;
       }
-      const cls = `seg${isK ? ' k' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
-      inner += `<span class="${cls}" data-si="${si}"${timing}>${isK && seg.r ? `<ruby>${chars}<rt>${esc(seg.r)}</rt></ruby>` : chars}</span>`;
+      const whole = ruby && line.ct?.[c0] ? unit(line.ct[c0][0], (line.ct[ci - 1] || line.ct[c0])[1]) : '';
+      const cls = `seg${isK ? ' k' : ''}${whole ? ' fu' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
+      inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}<rt>${esc(seg.r)}</rt></ruby>` : chars}</span>`;
     });
     html += `<span class="tok" data-ti="${ti}">${inner}</span>`;
   });
@@ -276,7 +281,7 @@ function collectFill() {
   if (!root) return;
   if (line.gap) S.fill = { gap: true, line, plan: dotsPlan(line), g: $('.dots-g', root), dots: $$('.dots-g i', root).map((el) => ({ el, p: -1 })), s: '', o: '' };
   else if (line.ct) {
-    S.fill = { segs: $$('.seg', root).filter((el) => el.dataset.t0).map((el) => {
+    S.fill = { segs: $$('.fu', root).map((el) => {
       el.classList.remove('on');
       return { el, t0: +el.dataset.t0, t1: +el.dataset.t1, d: Math.max(0.05, el.dataset.t1 - el.dataset.t0), p: -1, on: false };
     }) };
