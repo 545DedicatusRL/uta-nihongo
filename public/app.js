@@ -237,7 +237,7 @@ function springEasing(stiffness, damping, mass = 1) {
   pts[pts.length - 1] = 1;
   return { easing: `linear(${pts.join(', ')})`, ms: Math.round((pts.length - 1) * step * 1000) };
 }
-const SPRING = springEasing(100, 15); // 阻尼比 0.75：到位前只有一点点回弹
+const SPRING = springEasing(120, 22); // 临界阻尼：有弹簧的缓急，但到位时不回弹
 document.documentElement.style.setProperty('--spring', SPRING.easing);
 document.documentElement.style.setProperty('--spring-ms', `${SPRING.ms}ms`);
 const noMotion = matchMedia('(prefers-reduced-motion: reduce)');
