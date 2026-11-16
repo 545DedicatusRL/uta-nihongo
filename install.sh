@@ -41,7 +41,7 @@ fi
 if [ -e "$DEST" ] && [ ! -f "$DEST/server/index.js" ] && [ -n "$(ls -A "$DEST" 2>/dev/null || true)" ]; then
   fail "$DEST 已经存在，而且里面不是「$NAME」。" "为了不弄乱里面的东西，安装停在这里。可以换个位置：在命令前面加上 UTA_DIR=/别的/文件夹"
 fi
-UPDATING=""; [ -f "$DEST/server/index.js" ] && UPDATING=1
+VERB="安装"; [ -f "$DEST/server/index.js" ] && VERB="更新"
 
 # ---- 下载 ----
 # 优先用最新的正式版本（Release）；还没有发布过或查不到时用开发中的最新代码
@@ -49,7 +49,7 @@ TAG="$(curl -fsSL -m 15 "https://api.github.com/repos/$REPO/releases/latest" 2>/
 if [ -n "$TAG" ]; then URL="https://github.com/$REPO/archive/refs/tags/$TAG.tar.gz"; LABEL="$TAG"
 else URL="https://github.com/$REPO/archive/refs/heads/main.tar.gz"; LABEL="最新开发版"; fi
 
-say "${UPDATING:+更新}${UPDATING:-安装}「$NAME」$LABEL → $DEST"
+say "$VERB「$NAME」$LABEL → $DEST"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/src"
