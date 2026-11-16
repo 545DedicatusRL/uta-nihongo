@@ -556,26 +556,37 @@ function chipHTML(a) {
   const multi = !a.off && a.senses?.length > 1; // 多义词：修改模式下悬停可展开全部义项来挑
   return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">+${a.senses.filter((x) => x !== a.pick).length}</span>` : ''}</span>`;
 }
-// 修改模式（滚动样式）下，除了当前句，前后各两句也列出标注：这句唱过去了还来得及改
+// 除了当前句，还有哪些行要列出标注（只在滚动样式下）：
+//   修改模式：前后各两句——这句唱过去了还来得及改
+//   记词模式：整首歌——挑词的时候每一句的释义都在眼前
 const EDIT_NEAR = 2;
-function nearLines() {
-  if (S.mode !== 'edit' || prefs.view !== 'apple' || !prefs.ann || S.active === -2) return [];
-  const out = [];
+function annLines() {
+  const out = new Set();
+  if (!S.mode || prefs.view !== 'apple' || !prefs.ann || S.active === -2) return out;
+  if (S.mode === 'dict') {
+    S.lines.forEach((l, k) => { if (!l.gap && k !== S.active) out.add(k); });
+    return out;
+  }
   for (const dir of [-1, 1]) {
     for (let k = Math.max(S.active, -1) + dir, n = 0; k >= 0 && k < S.lines.length && n < EDIT_NEAR; k += dir) {
-      if (!S.lines[k].gap) { out.push(k); n++; }
+      if (!S.lines[k].gap) { out.add(k); n++; }
     }
   }
   return out;
 }
-// 一行的标注收起来：不是直接消失，原地淡出（同时不再占位置，下面的行可以马上往上合拢）
-function annLeave(el) {
-  const box = $('.ann', el);
-  if (!box || !box.childElementCount) return;
-  if (noMotion.matches || document.hidden || prefs.view !== 'apple') { box.innerHTML = ''; return; }
-  box.style.width = `${box.offsetWidth}px`;
+// 往一行的标注框里放内容。内容没变就不动它：记词模式下每换一句都要过一遍整首歌的标注
+function setAnn(box, html) {
+  const cls = `ann ${prefs.annStyle}`;
+  if (box.className !== cls) box.className = cls;
+  if (box.style.width) box.style.width = '';
+  if (box._html !== html) { box._html = html; box.innerHTML = html; }
+}
+// 一行的标注收起来：不是直接消失，原地淡出（同时不再占位置，下面的行可以马上往上合拢）。w = 收起前的宽度
+function annLeave(box, w) {
+  if (!box.childElementCount) return;
+  box.style.width = `${w}px`;
   box.classList.add('leaving');
-  const done = () => { if (!box.classList.contains('leaving')) return; box.classList.remove('leaving'); box.style.width = ''; box.innerHTML = ''; };
+  const done = () => { if (!box.classList.contains('leaving')) return; box.classList.remove('leaving'); setAnn(box, ''); };
   box.addEventListener('animationend', done, { once: true });
   setTimeout(done, 400);
 }
@@ -586,10 +597,11 @@ function paintAnnotations() {
   S.annsByLine = new Map([[S.active, anns]]);
   S.annByTok = {};
   for (const a of anns) if (!a.off) for (let k = a.start; k < a.end; k++) (S.annByTok[k] ||= []).push(a);
-  // 修改模式下总是列出标签（即使平时选的是「仅下划线」），这样才能点
-  const html = prefs.annStyle === 'underline' && S.mode !== 'edit' ? '' : anns.map(chipHTML).join('');
+  // 修改 / 记词模式下总是列出标签（即使平时选的是「仅下划线」）：一个要能点，一个要能看
+  const html = prefs.annStyle === 'underline' && !S.mode ? '' : anns.map(chipHTML).join('');
   const roots = [$('#f-cur')];
-  const el = $('#scroll').children[S.active];
+  const els = $('#scroll').children;
+  const el = els[S.active];
   if (el) roots.push(el);
   for (const root of roots) {
     $$('.tok', root).forEach((tokEl) => {
@@ -598,24 +610,29 @@ function paintAnnotations() {
       tokEl.classList.toggle('hv', list.some((a) => a.type === 'v'));
     });
   }
-  if (el) { const box = $('.ann', el); box.className = `ann ${prefs.annStyle}`; box.style.width = ''; box.innerHTML = html; }
+  const show = annLines();
+  // 要收起的行：先一次量完（宽度、在不在视野里），再动手改，免得改一行量一行
+  const still = noMotion.matches || document.hidden || prefs.view !== 'apple';
+  const H = innerHeight;
+  const leaving = $$('#scroll .line.ann-on').filter((old) => !show.has(+old.dataset.i)).map((old) => {
+    const box = $('.ann', old);
+    const r = still ? null : box.getBoundingClientRect();
+    return { old, box, w: r ? r.width : 0, seen: !!r && r.bottom > 0 && r.top < H };
+  });
+  if (el) setAnn($('.ann', el), html);
   const fa = $('#f-ann'); fa.className = `f-ann ${prefs.annStyle}`; fa.innerHTML = html;
-  const near = new Set(nearLines());
-  for (const k of near) {
+  for (const k of show) {
+    const nel = els[k];
+    if (!nel) continue;
     const list = annotationsFor(S.lines[k]);
     S.annsByLine.set(k, list);
-    const nel = $('#scroll').children[k];
-    if (!nel) continue;
     const box = $('.ann', nel);
-    box.className = `ann ${prefs.annStyle}`;
-    box.style.width = '';
-    box.innerHTML = list.map(chipHTML).join('');
-    nel.classList.add('ann-on');
+    if (box.classList.contains('leaving')) { box.classList.remove('leaving'); box._html = null; }
+    setAnn(box, list.map(chipHTML).join(''));
+    if (!nel.classList.contains('ann-on')) nel.classList.add('ann-on');
   }
-  for (const old of $$('#scroll .line.ann-on')) {
-    const k = +old.dataset.i;
-    if (near.has(k)) continue;
-    if (k !== S.active) annLeave(old); // 先量宽度、定住，再摘掉 ann-on（摘掉之后就量不到了）
+  for (const { old, box, w, seen } of leaving) {
+    if (+old.dataset.i !== S.active) { if (seen) annLeave(box, w); else setAnn(box, ''); }
     old.classList.remove('ann-on');
   }
 }
@@ -634,7 +651,9 @@ async function fetchDict(token) {
     Object.assign(S.dict, await api.post('/api/dict', { words: [...where.keys()], cachedOnly: true }));
   } catch { /* 离线时没有词汇标注，其余功能不受影响 */ }
   if (token !== S.loadToken) return;
-  paintAnnotations();
+  // 修改 / 记词模式下别的行也列着标注，新查到的词会让它们变高：各行顺着滑到新位置，当前句不跳走
+  const repaint = () => (S.mode ? glide(() => { paintAnnotations(); jumpToActive(); }) : paintAnnotations());
+  repaint();
   const todo = new Set([...where.keys()].filter((k) => !S.dict[k] || S.dict[k].stale));
   while (todo.size) {
     const cur = Math.max(S.active, 0);
@@ -646,7 +665,7 @@ async function fetchDict(token) {
     if (token !== S.loadToken) return;
     for (const k of batch) todo.delete(k); // 这次没查成的（网络问题）不反复重试，下次打开这首歌再查
     Object.assign(S.dict, got);
-    paintAnnotations();
+    repaint();
   }
 }
 
@@ -673,7 +692,8 @@ function seekTo(sec) {
 document.addEventListener('click', (e) => {
   const lineEl = e.target.closest('.line');
   const inFocus = e.target.closest('#f-cur');
-  if (S.mode === 'dict' && (lineEl || inFocus)) return dictClick(e);
+  // 记词模式：点在词上是选词；点在这一行的其他地方（空白、翻译）和平时一样，跳到这一句
+  if (S.mode === 'dict' && (inFocus || (lineEl && e.target.closest('.tok, .chip')))) return dictClick(e);
   if (S.mode === 'edit' && (lineEl || inFocus || e.target.closest('#f-ann'))) return editClick(e);
   const near = e.target.closest('#f-prev, #f-next'); // 大字视图里的上一句 / 下一句
   const i = lineEl ? +lineEl.dataset.i : near && near.dataset.i !== '' ? +near.dataset.i : -1;
