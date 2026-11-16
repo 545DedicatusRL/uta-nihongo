@@ -137,6 +137,9 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 /* 间奏的三个点：外层管出现时的淡入，里层（.dots-g）的大小和透明度由 app.js 的 paintDots 按进度驱动 */
 .dots { display: inline-flex; align-items: center; height: 34px; margin-left: 5px; opacity: 0; transition: opacity .45s; }
 .line.gap.active .dots, #f-cur .dots { opacity: 1; }
+/* 出现时由小到大渐入 */
+.line.gap.active .dots { animation: dots-in .8s cubic-bezier(.2, .7, .2, 1) backwards; }
+@keyframes dots-in { from { opacity: 0; transform: scale(.6); } }
 .dots-g { display: inline-flex; gap: 11px; align-items: center; transform: scale(.88); will-change: transform, opacity; }
 .dots i { width: 15px; height: 15px; border-radius: 50%; background: #fff; opacity: calc(.28 + .72 * var(--p, 0)); transform: scale(calc(.84 + .16 * var(--p, 0))); }
 .dots.idle .dots-g { animation: dots-breathe 2.4s ease-in-out infinite; }
@@ -387,5 +390,5 @@ select option { background: #2b2636; }
   .view-focus #meta { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .line, .f-cur, .drawer, .timed .seg, .line.active .ann, .dots.idle .dots-g { transition: none; animation: none; }
+  .line, .f-cur, .drawer, .timed .seg, .line.active .ann, .dots.idle .dots-g, .line.gap.active .dots { transition: none; animation: none; }
 }

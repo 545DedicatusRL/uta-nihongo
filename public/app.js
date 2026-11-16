@@ -273,7 +273,7 @@ function collectFill() {
   if (!line) return;
   const root = prefs.view === 'focus' ? $('#f-cur') : elScroll.children[S.active];
   if (!root) return;
-  if (line.gap) S.fill = { gap: true, line, g: $('.dots-g', root), dots: $$('.dots-g i', root).map((el) => ({ el, p: -1 })), s: '', o: '' };
+  if (line.gap) S.fill = { gap: true, line, plan: dotsPlan(line), g: $('.dots-g', root), dots: $$('.dots-g i', root).map((el) => ({ el, p: -1 })), s: '', o: '' };
   else if (line.ct) {
     S.fill = { segs: $$('.seg', root).filter((el) => el.dataset.t0).map((el) => {
       el.classList.remove('on');
@@ -353,22 +353,44 @@ function setProgress(frac) {
 }
 // 间奏的三个点。e：间奏已经过了多久；D：间奏总长
 //   1. 三个点依次读满；整体一直在「呼吸」，越接近读满呼吸的幅度越大、个头也越大
-//   2. 读满的那一刻正好在呼吸的最高点，接着再胀大一点，然后缩小并淡出，在下一句开始前消失
-function paintDots(f, t) {
-  const D = f.line.end - f.line.t, e = t - f.line.t;
+//   2. 呼吸不是匀速的正弦：胀到最大、缩到最小时都会停一小会儿，中间缓进缓出
+//   3. 呼吸一开始慢，之后加快，但加快的势头很快就平下来（频率按 1 - e^(-t/τ) 趋近一个稳定值）
+//   4. 读满的那一刻正好停在最大处，接着再胀大一点，然后缩小并淡出，在下一句开始前消失
+const BREATH_HOLD = 0.13; // 一次呼吸里，在最大 / 最小处各停留的比例
+// x：一次呼吸里走到哪了（0–1，0 是「最大」那段停顿的正中）。返回 -1（最小）到 1（最大）
+function breath(x) {
+  const h = BREATH_HOLD / 2, m = 0.5 - BREATH_HOLD;
+  if (x < h || x >= 1 - h) return 1;
+  if (x < 0.5 - h) return Math.cos(Math.PI * (x - h) / m);
+  if (x < 0.5 + h) return -1;
+  return -Math.cos(Math.PI * (x - 0.5 - h) / m);
+}
+// 每段间奏算一次：各阶段的时刻，以及「过了 e 秒时呼吸了多少次」的函数
+function dotsPlan(line) {
+  const D = line.end - line.t;
   const out = Math.min(1.1, D * 0.22);          // 收尾（胀大 → 淡出）用的时间
   const full = Math.max(0.3, D - out - 0.12);   // 读满的时刻
-  const span = full / 3;
+  const tau = clamp(full * 0.3, 1.5, 4);        // 呼吸加快的势头多久平下来
+  let f0 = 1 / 4.4, f1 = 1 / 1.9;               // 呼吸的频率：从约 4.4 秒一次加快到约 1.9 秒一次
+  const count = (e) => f1 * e - (f1 - f0) * tau * (1 - Math.exp(-e / tau));
+  // 微调快慢，让整段正好是「N 次半」：从最小处开始，读满时落在最大处
+  const k = (Math.max(1, Math.round(count(full) - 0.5)) + 0.5) / count(full);
+  f0 *= k; f1 *= k;
+  return { out, full, span: full / 3, count, total: count(full) };
+}
+function paintDots(f, t) {
+  const g = f.plan, e = Math.max(0, t - f.line.t);
   for (let k = 0; k < f.dots.length; k++) {
-    const dot = f.dots[k], p = Math.round(clamp((e - k * span) / span) * 100) / 100;
+    const dot = f.dots[k], p = Math.round(clamp((e - k * g.span) / g.span) * 100) / 100;
     if (p !== dot.p) { dot.p = p; dot.el.style.setProperty('--p', p); }
   }
   let sc, op = 1;
-  if (e <= full) {
-    const P = clamp(e / full);
-    sc = (0.88 + 0.12 * P) * (1 + (0.035 + 0.055 * P) * Math.cos((e - full) * 2 * Math.PI / 2.4));
+  if (e <= g.full) {
+    const P = e / g.full;
+    const cyc = g.count(e) - g.total; // 距离「读满」还差多少次呼吸（负数），0 = 正在最大处
+    sc = (0.88 + 0.12 * P) * (1 + (0.035 + 0.055 * P) * breath(cyc - Math.floor(cyc)));
   } else {
-    const q = clamp((e - full) / out), peak = 1.09;
+    const q = clamp((e - g.full) / g.out), peak = 1.09;
     if (q < 0.4) sc = peak + (1.22 - peak) * (1 - (1 - q / 0.4) ** 2);
     else { const u = (q - 0.4) / 0.6; sc = 1.22 - 0.5 * u * u; op = 1 - u * u * (3 - 2 * u); }
   }
