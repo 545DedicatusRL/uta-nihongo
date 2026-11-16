@@ -223,6 +223,9 @@ ruby { ruby-align: center; }
 .dict-mode.by-char .tok .ch:hover { background: rgba(255, 255, 255, .16); }
 .ch.sel { background: var(--accent) !important; color: #fff; -webkit-text-fill-color: #fff; }
 .dict-mode .tok { margin: 0 1.5px; }
+/* 一个变形单位里的词（走っ+て）挨在一起，鼠标移上去整段一起亮 */
+.dict-mode:not(.by-char) .tok.j { margin-left: -1.5px; }
+.dict-mode:not(.by-char) .tok.uh .ch { background: rgba(255, 255, 255, .16); }
 /* 记词 / 修改模式下不填色；把 background-clip 也还原，否则点选时字的底色会被裁成字形、看不见 */
 .dict-mode .timed .fu { background: none; -webkit-background-clip: border-box; background-clip: border-box; color: inherit; }
 .dict-mode .timed .fu rt, .edit-mode .timed .fu rt { color: inherit; }

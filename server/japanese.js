@@ -345,26 +345,38 @@ function isContentWord(t) {
 //   て 后面的补助动词（いる、しまう、くる、いく、みる、くれる、ください…）和它们的缩约形（てる、ちゃう、とく…）
 //   样态的 そう
 // 「走り続ける」这种复合动词里的后一个动词不算尾巴——它和前面合起来是另一个词。
+//
+// 另外给出 j：这个词和前一个词是「同一个变形」，记词时点一下就整段选中（走っ+て、走ら+なかっ+た、
+// 勉強+し+た）。只有前面是会变形的词（动词、形容词、形容动词词干、サ变名词 + する）才连：
+// 「夢だ」的 だ 不连到 夢 上，て 后面的 も / は 也不连（它们是另外的助词，只是选中时不妨碍还原）。
 const TAIL_PARTICLES = new Set(['て', 'で', 'ば', 'ながら', 'つつ']);
 const TAIL_CONTRACTED = new Set(['てる', 'でる', 'ちゃう', 'じゃう', 'とく', 'どく', 'ちまう', 'じまう']);
 function tailFlags(raw) {
   const out = [];
   let afterTe = false; // 上一个是不是接续的 て / で
+  let open = false;    // 现在这一段的开头是不是会变形的词（后面的尾巴才连上去）
   raw.forEach((t, i) => {
     const s = t.surface_form, d1 = t.pos_detail_1;
-    let f = false, te = false;
+    let f = false, te = false, loose = false;
     if (i > 0) {
       if (t.pos === '助動詞') f = true;
       else if (t.pos === '助詞') {
         if (d1 === '接続助詞' && TAIL_PARTICLES.has(s)) { f = true; te = s === 'て' || s === 'で'; }
         else if (d1 === '並立助詞' && (s === 'たり' || s === 'だり')) f = true;
-        else if (d1 === '係助詞' && (s === 'も' || s === 'は') && afterTe) f = true;
+        else if (d1 === '係助詞' && (s === 'も' || s === 'は') && afterTe) { f = true; loose = true; }
       } else if (t.pos === '動詞') {
         if (d1 === '接尾') f = true;
         else if (d1 === '非自立' && (afterTe || TAIL_CONTRACTED.has(t.basic_form))) { f = true; te = s === 'て' || s === 'で'; }
       } else if (t.pos === '名詞' && d1 === '接尾' && t.pos_detail_2 === '助動詞語幹') f = true;
     }
-    out.push(f);
+    // サ变名词后面的 する：不是尾巴（它自己是动词），但和前面的名词是一个单位
+    const prev = raw[i - 1];
+    const suru = !f && t.pos === '動詞' && t.basic_form === 'する' && prev?.pos === '名詞' && prev.pos_detail_1 === 'サ変接続';
+    const j = suru || (f && !loose && open);
+    out.push({ f, j });
+    if (suru) open = true;
+    else if (f) open = open && !loose;
+    else open = t.pos === '動詞' || t.pos === '形容詞' || (t.pos === '名詞' && d1 === '形容動詞語幹');
     afterTe = te;
   });
   return out;
@@ -396,7 +408,8 @@ export async function analyzeLyrics(lines, opts = {}) {
           raw: [ri],
         };
         if (isContentWord(t)) tok.v = 1;
-        if (tails[ri]) tok.f = 1;
+        if (tails[ri].f) tok.f = 1;
+        if (tails[ri].j) tok.j = 1;
         if (t.word_type === 'UNKNOWN' && [...s].some(isKanji)) tok.u = 1; // 分词器不认识的词：查到的词条要和读音对得上才用
         if (/^\s+$/.test(s)) tok.sp = 1;
         i0 += s.length;

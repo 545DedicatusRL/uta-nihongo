@@ -196,7 +196,7 @@ function jpHTML(line, li) {
       const cls = `seg${isK ? ' k' : ''}${whole ? ' fu' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
       inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}<rt>${esc(seg.r)}</rt></ruby>` : chars}</span>`;
     });
-    html += `<span class="tok" data-ti="${ti}">${inner}</span>`;
+    html += `<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
   });
   return html;
 }
@@ -765,7 +765,7 @@ function dictClick(e) {
   const c = +ch.dataset.c;
   const tok = line.tokens.find((t) => c >= t.i0 && c < t.i0 + t.s.length);
   if (!tok || tok.sp) return;
-  const [u0, u1] = prefs.dictChar ? [c, c + ch.textContent.length] : [tok.i0, tok.i0 + tok.s.length];
+  const [u0, u1] = prefs.dictChar ? [c, c + ch.textContent.length] : unitRange(line, line.tokens.indexOf(tok));
   const s = S.sel;
   if (!s || s.li !== li) S.sel = { li, a: u0, b: u1 };
   else if (u0 >= s.a && u1 <= s.b) {
@@ -779,6 +779,25 @@ function dictClick(e) {
   paintSelection();
   updateDictBar(true);
 }
+// 记词模式下点一下选中的范围：这个词所在的「一个单位」——词干连同它的变形尾巴（走って、走らなかった、勉強した）
+function unitRange(line, ti) {
+  let a = ti, b = ti;
+  while (a > 0 && line.tokens[a].j) a--;
+  while (line.tokens[b + 1]?.j) b++;
+  return [line.tokens[a].i0, line.tokens[b].i0 + line.tokens[b].s.length];
+}
+// 鼠标移到一个词上：整个单位一起亮，看得出点下去会选中哪一段
+let unitHover = [];
+document.addEventListener('mouseover', (e) => {
+  const tokEl = S.mode === 'dict' && !prefs.dictChar ? e.target.closest?.('.jp .tok') : null;
+  if (tokEl && unitHover.includes(tokEl)) return;
+  for (const el of unitHover) el.classList.remove('uh');
+  unitHover = [];
+  if (!tokEl) return;
+  let head = tokEl;
+  while (head.classList.contains('j') && head.previousElementSibling) head = head.previousElementSibling;
+  for (let el = head; el && (el === head || el.classList.contains('j')); el = el.nextElementSibling) { unitHover.push(el); el.classList.add('uh'); }
+});
 function paintSelection() {
   $$('.ch.sel').forEach((el) => el.classList.remove('sel'));
   const s = S.sel;
