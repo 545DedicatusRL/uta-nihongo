@@ -1,4 +1,5 @@
 // 唱歌学日语 — 前端
+import { JA_ARTISTS } from './ja-artists.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -987,15 +988,29 @@ const lib = { tracks: null, loading: false, shown: 0, filtered: [] };
 //   3. 专辑名里有假名——合辑除外（日区的「ベストセラー」之类合辑里什么歌都有）
 //   4. 同一位歌手只要有一首符合上面任意一条，他的其他歌也算（歌名被译成英文 / 罗马字的那些）
 // 流派明确是其他语种的（Mandopop、K-Pop…）一律不算，免得被第 4 条带进来。
+//   5. 歌手在内置的日本歌手名单里（ja-artists.js）——元数据全是英文、流派又是 Rock 之类的歌手靠这一条
 const JA_GENRE = /^(anime|j-|kayokyoku|enka|japan)|vocaloid/i;
 const NOT_JA_GENRE = /mandopop|cantopop|c-pop|k-pop|chinese|korean|taiwan/i;
 const KANA = /[\u3040-\u30ff]/;
+// 名单比对：忽略大小写、空格和标点；合作曲（A & B、A feat. B、A, B…）里有一位在名单上就算
+const normName = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+const JA_LISTED = new Set(JA_ARTISTS.map(normName));
+const ARTIST_SPLIT = /\s*(?:,|&|\/|×|・|、|\bfeat\.?|\bft\.?|\bwith\b|\bvs\.?)\s*/i;
+const listedCache = new Map();
+function listedArtist(artist) {
+  let hit = listedCache.get(artist);
+  if (hit === undefined) {
+    hit = JA_LISTED.has(normName(artist)) || artist.split(ARTIST_SPLIT).some((part) => part && JA_LISTED.has(normName(part)));
+    listedCache.set(artist, hit);
+  }
+  return hit;
+}
 function markJapanese(tracks) {
   const artistKey = (t) => t.artist.trim().toLowerCase();
   const jaArtists = new Set();
   for (const t of tracks) {
     const g = t.genre || '';
-    t.ja = !NOT_JA_GENRE.test(g) && (JA_GENRE.test(g) || KANA.test(t.name + t.artist) || (!t.comp && KANA.test(t.album)));
+    t.ja = !NOT_JA_GENRE.test(g) && (JA_GENRE.test(g) || KANA.test(t.name + t.artist) || (!t.comp && KANA.test(t.album)) || listedArtist(t.artist));
     if (t.ja && artistKey(t)) jaArtists.add(artistKey(t));
   }
   for (const t of tracks) {
@@ -1012,6 +1027,7 @@ async function openLibrary() {
   try {
     const [tracks, playlists] = await Promise.all([api.get('/api/library'), api.get('/api/playlists').catch(() => [])]);
     lib.tracks = markJapanese(tracks);
+    lib.jaByPid = new Map(tracks.map((t) => [t.pid, t.ja]));
     $('#lib-playlist').innerHTML = '<option value="">全部歌曲</option>' + playlists.map((p) => `<option value="${esc(p.pid)}">${esc(p.name)}</option>`).join('');
     renderLibrary();
   } catch (e) {
@@ -1058,7 +1074,15 @@ $('#lib-ja').addEventListener('change', (e) => { prefs.libJa = e.target.checked;
 $('#lib-recent').addEventListener('change', renderLibrary);
 $('#lib-playlist').addEventListener('change', async (e) => {
   $('#lib-list').innerHTML = '<div class="empty">读取中…</div>';
-  try { lib.tracks = markJapanese(await api.get(`/api/library?playlist=${encodeURIComponent(e.target.value)}`)); renderLibrary(); }
+  try {
+    const tracks = markJapanese(await api.get(`/api/library?playlist=${encodeURIComponent(e.target.value)}`));
+    // 歌单里的歌是不是日文歌，以整个资料库的判断为准：只看歌单自己那几首的话线索不够
+    // （比如整张专辑的歌名都是英文译名，要靠同一位歌手的其他歌才认得出来）
+    if (e.target.value) for (const t of tracks) { const known = lib.jaByPid?.get(t.pid); if (known !== undefined) t.ja = known; }
+    else lib.jaByPid = new Map(tracks.map((t) => [t.pid, t.ja]));
+    lib.tracks = tracks;
+    renderLibrary();
+  }
   catch (err) { $('#lib-list').innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
 });
 
