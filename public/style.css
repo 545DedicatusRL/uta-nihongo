@@ -338,8 +338,9 @@ select option { background: #2b2636; }
 .vwrap { position: relative; }
 .vbody { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; transition: filter .35s ease, opacity .35s ease; }
 .vcard.veil .vbody { filter: blur(7px); opacity: .55; pointer-events: none; user-select: none; }
-/* 「展示释义」放在释义那一行（模糊块的第一行）的正中，而不是整块的正中 */
-.vreveal { position: absolute; top: calc(.75em + 2px); left: 50%; translate: -50% -50%; opacity: 0; pointer-events: none; transition: opacity .15s; background: rgba(40, 36, 52, .9); }
+/* 「展示释义」盖在释义文字上：释义是靠左排的短短一段，按钮对准这段文字的中间（--mw 是文字的宽度，
+   由 app.js 量出来）；文字比按钮还短时贴着左边，不超出卡片 */
+.vreveal { position: absolute; top: calc(.75em + 2px); left: max(calc(var(--mw, 120px) / 2), 2.6em); translate: -50% -50%; opacity: 0; pointer-events: none; transition: opacity .15s; background: rgba(40, 36, 52, .9); }
 .vreveal:hover { background: rgba(62, 56, 78, .95); }
 .vcard.veil .vwrap:hover .vreveal, .vcard.veil .vreveal:focus-visible { opacity: 1; pointer-events: auto; }
 .btn.toggle.on { background: rgba(255, 255, 255, .2); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .45); }
