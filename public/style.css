@@ -128,6 +128,12 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .line.active { color: var(--fg); transform: none; }
 .line.active .ann { animation: ann-in .5s .12s cubic-bezier(.2, .8, .2, 1) backwards; }
 @keyframes ann-in { from { opacity: 0; transform: translateY(6px); } }
+/* 修改模式：当前句前后各两句也列出标注（稍暗一点，当前句仍然最显眼）；收起时原地淡出，不再占位置 */
+.line.ann-on .ann { display: flex; animation: ann-in .45s cubic-bezier(.2, .8, .2, 1) backwards; }
+.line.ann-on:not(.active) .ann { opacity: .78; transition: opacity .2s; }
+.line.ann-on:not(.active) .ann:hover { opacity: 1; }
+.line .ann.leaving { display: flex; position: absolute; pointer-events: none; animation: ann-out .2s ease-in forwards; }
+@keyframes ann-out { to { opacity: 0; transform: translateY(-4px); } }
 .line.past { color: var(--fg-3); }
 #scroll.free .line, .dict-mode .line, .edit-mode .line { filter: none; opacity: 1; }
 /* 间奏行平时收起、不占位置；到了间奏才展开，上下的歌词被它推开（位移由 glide 的弹簧动画补上），间奏结束再合拢 */
@@ -477,5 +483,5 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
   .view-focus #meta { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .vbody, .line, .f-cur, .drawer, .timed .fu, .line.active .ann, .dots.idle .dots-g, .line.gap.active .dots, #f-cur .dots { transition: none; animation: none; }
+  .vbody, .line, .f-cur, .drawer, .timed .fu, .line.active .ann, .line.ann-on .ann, .line .ann.leaving, .dots.idle .dots-g, .line.gap.active .dots, #f-cur .dots { transition: none; animation: none; }
 }

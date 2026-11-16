@@ -545,21 +545,45 @@ function annotationsFor(line) {
   const uniq = items.filter((a) => { a.key = `${a.type}:${a.title}`; if (seen.has(a.key)) return false; seen.add(a.key); return true; });
   const hidden = S.hiddenAnn || new Set();
   const rank = (a) => RANK[a.lv] ?? 2.5;
-  const shown = uniq.filter((a) => !hidden.has(a.key))
-    .map((a, k) => ({ a, k })).sort((x, y) => rank(y.a) - rank(x.a) || x.k - y.k)
-    .slice(0, prefs.annMax).sort((x, y) => x.a.start - y.a.start || x.k - y.k).map((x) => x.a);
-  // 这首歌里被关掉的标注：平时不出现，只在修改模式下以虚线框列出，方便加回来
-  const off = S.mode === 'edit' ? uniq.filter((a) => hidden.has(a.key)).map((a) => ({ ...a, off: true })) : [];
-  return [...shown, ...off];
+  const byPlace = (x, y) => x.a.start - y.a.start || x.k - y.k;
+  const all = uniq.map((a, k) => ({ a, k }));
+  const shown = all.filter((x) => !hidden.has(x.a.key)).sort((x, y) => rank(y.a) - rank(x.a) || x.k - y.k).slice(0, prefs.annMax);
+  // 这首歌里被关掉的标注：平时不出现；修改模式下以虚线框留在原来的位置，方便加回来
+  const off = S.mode === 'edit' ? all.filter((x) => hidden.has(x.a.key)).map((x) => ({ a: { ...x.a, off: true }, k: x.k })) : [];
+  return [...shown, ...off].sort(byPlace).map((x) => x.a);
 }
 function chipHTML(a) {
   const multi = !a.off && a.senses?.length > 1; // 多义词：修改模式下悬停可展开全部义项来挑
   return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">+${a.senses.filter((x) => x !== a.pick).length}</span>` : ''}</span>`;
 }
+// 修改模式（滚动样式）下，除了当前句，前后各两句也列出标注：这句唱过去了还来得及改
+const EDIT_NEAR = 2;
+function nearLines() {
+  if (S.mode !== 'edit' || prefs.view !== 'apple' || !prefs.ann || S.active === -2) return [];
+  const out = [];
+  for (const dir of [-1, 1]) {
+    for (let k = Math.max(S.active, -1) + dir, n = 0; k >= 0 && k < S.lines.length && n < EDIT_NEAR; k += dir) {
+      if (!S.lines[k].gap) { out.push(k); n++; }
+    }
+  }
+  return out;
+}
+// 一行的标注收起来：不是直接消失，原地淡出（同时不再占位置，下面的行可以马上往上合拢）
+function annLeave(el) {
+  const box = $('.ann', el);
+  if (!box || !box.childElementCount) return;
+  if (noMotion.matches || document.hidden || prefs.view !== 'apple') { box.innerHTML = ''; return; }
+  box.style.width = `${box.offsetWidth}px`;
+  box.classList.add('leaving');
+  const done = () => { if (!box.classList.contains('leaving')) return; box.classList.remove('leaving'); box.style.width = ''; box.innerHTML = ''; };
+  box.addEventListener('animationend', done, { once: true });
+  setTimeout(done, 400);
+}
 function paintAnnotations() {
   const line = S.lines[S.active];
   const anns = prefs.ann ? annotationsFor(line) : [];
   S.anns = anns;
+  S.annsByLine = new Map([[S.active, anns]]);
   S.annByTok = {};
   for (const a of anns) if (!a.off) for (let k = a.start; k < a.end; k++) (S.annByTok[k] ||= []).push(a);
   // 修改模式下总是列出标签（即使平时选的是「仅下划线」），这样才能点
@@ -574,8 +598,26 @@ function paintAnnotations() {
       tokEl.classList.toggle('hv', list.some((a) => a.type === 'v'));
     });
   }
-  if (el) { const box = $('.ann', el); box.className = `ann ${prefs.annStyle}`; box.innerHTML = html; }
+  if (el) { const box = $('.ann', el); box.className = `ann ${prefs.annStyle}`; box.style.width = ''; box.innerHTML = html; }
   const fa = $('#f-ann'); fa.className = `f-ann ${prefs.annStyle}`; fa.innerHTML = html;
+  const near = new Set(nearLines());
+  for (const k of near) {
+    const list = annotationsFor(S.lines[k]);
+    S.annsByLine.set(k, list);
+    const nel = $('#scroll').children[k];
+    if (!nel) continue;
+    const box = $('.ann', nel);
+    box.className = `ann ${prefs.annStyle}`;
+    box.style.width = '';
+    box.innerHTML = list.map(chipHTML).join('');
+    nel.classList.add('ann-on');
+  }
+  for (const old of $$('#scroll .line.ann-on')) {
+    const k = +old.dataset.i;
+    if (near.has(k)) continue;
+    if (k !== S.active) annLeave(old); // 先量宽度、定住，再摘掉 ann-on（摘掉之后就量不到了）
+    old.classList.remove('ann-on');
+  }
 }
 
 // 查词典用的键：带汉字的词连同「实际唱的读音」一起查（辛い|つら），同一个写法有几个词条时才选得对
@@ -672,20 +714,24 @@ new MutationObserver(() => {
 // ---------------- 辞书模式 ----------------
 function setMode(mode) {
   S.mode = S.mode === mode ? null : mode;
-  app.classList.toggle('dict-mode', S.mode === 'dict');
-  app.classList.toggle('edit-mode', S.mode === 'edit');
-  app.classList.toggle('by-char', S.mode === 'dict' && prefs.dictChar);
   $('#btn-dict').classList.toggle('on', S.mode === 'dict');
   $('#btn-edit').classList.toggle('on', S.mode === 'edit');
   $('#btn-edit').setAttribute('aria-pressed', S.mode === 'edit');
   $('#dictbar').hidden = S.mode !== 'dict';
   $('#reading-pop').hidden = true;
   tip.hidden = true;
-  if (S.mode !== 'dict') { S.sel = null; paintSelection(); resumeIfPausedByDict(); }
-  updateDictBar();
-  paintAnnotations();
   hideSensePop();
-  requestAnimationFrame(() => scrollToActive(true));
+  // 进出模式会改变各行的高矮（修改模式下前后几句的标注展开 / 收起）：
+  // 这些变化都放在 glide 里做，各行从原来的位置顺着滑到新位置，而不是跳过去
+  glide(() => {
+    app.classList.toggle('dict-mode', S.mode === 'dict');
+    app.classList.toggle('edit-mode', S.mode === 'edit');
+    app.classList.toggle('by-char', S.mode === 'dict' && prefs.dictChar);
+    if (S.mode !== 'dict') { S.sel = null; paintSelection(); resumeIfPausedByDict(); }
+    updateDictBar();
+    paintAnnotations();
+    jumpToActive();
+  });
 }
 function resumeIfPausedByDict() {
   if (S.pausedByDict) { S.pausedByDict = false; control('play'); }
@@ -815,7 +861,9 @@ let editing = null;
 // 修改模式下，鼠标停在多义词的标注上：其他义项以同款小卡叠在它下面，
 // 点其中一张就换上它（这首歌里固定用它），原来那张弹出后排到最下面。
 const sensePop = $('#sense-pop');
-const sense = { ann: null, box: null, order: [], timer: 0, busy: false };
+const sense = { ann: null, box: null, li: null, order: [], timer: 0, busy: false };
+// 一张标注属于哪一行：滚动样式里看它在哪一行（修改模式下前后几句也有标注），大字样式里就是当前句
+const annsAt = (li) => (li === null ? S.anns : S.annsByLine?.get(li)) || [];
 function hideSensePop() { clearTimeout(sense.timer); sensePop.hidden = true; sense.ann = null; }
 const altCardHTML = (a, text, i, animate) =>
   `<span class="chip v alt${animate ? ' in' : ''}" data-i="${i}" style="--i:${i}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(text)}</span></span>`;
@@ -833,9 +881,12 @@ function renderSensePop(animate) {
   sensePop.style.top = `${below ? r.bottom + 6 : Math.max(8, r.top - sensePop.offsetHeight - 6)}px`;
 }
 function openSensePop(chip) {
-  const a = (S.anns || []).find((x) => x.key === chip.dataset.key && !x.off);
+  const lineEl = chip.closest('.line');
+  const li = lineEl ? +lineEl.dataset.i : null;
+  const a = annsAt(li).find((x) => x.key === chip.dataset.key && !x.off);
   if (!a || !(a.senses?.length > 1)) return;
   sense.ann = a;
+  sense.li = li;
   sense.box = chip.closest('.ann, #f-ann');
   sense.order = a.senses.filter((x) => x !== a.pick);
   renderSensePop(true);
@@ -845,7 +896,7 @@ document.addEventListener('mouseover', (e) => {
   const chip = S.mode === 'edit' ? e.target.closest?.('.chip.multi') : null;
   if (chip || e.target.closest?.('#sense-pop')) {
     clearTimeout(sense.timer);
-    if (chip && (sensePop.hidden || sense.ann?.key !== chip.dataset.key)) openSensePop(chip);
+    if (chip && (sensePop.hidden || sense.ann?.key !== chip.dataset.key || sense.box !== chip.closest('.ann, #f-ann'))) openSensePop(chip);
   } else if (!sensePop.hidden) {
     clearTimeout(sense.timer);
     sense.timer = setTimeout(hideSensePop, 300); // 留一点时间把鼠标移到卡片上
@@ -891,7 +942,7 @@ sensePop.addEventListener('click', (e) => {
   S.senses[a.key] = next;
   sense.order = [...sense.order.filter((_, k) => k !== i), prev];  // 被换下的义项排到最下面
   paintAnnotations();
-  sense.ann = (S.anns || []).find((x) => x.key === a.key && !x.off) || null;
+  sense.ann = annsAt(sense.li).find((x) => x.key === a.key && !x.off) || null;
   if (!sense.ann) { out?.host.remove(); return hideSensePop(); }
   renderSensePop(false);
   const fresh = currentSenseChip();
