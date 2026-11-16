@@ -334,6 +334,14 @@ select option { background: #2b2636; }
 .vdel.armed .ext { grid-template-columns: 1fr; }
 @media (prefers-reduced-motion: reduce) { .vdel, .vdel .ext { transition: none; } }
 .vcard .w { font: 700 20px/1.7 var(--font-ja); }
+/* 记忆模式：释义、例句和翻译整块模糊；鼠标移上去出现「展示释义」，点了这张卡就恢复 */
+.vwrap { position: relative; }
+.vbody { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; transition: filter .35s ease, opacity .35s ease; }
+.vcard.veil .vbody { filter: blur(7px); opacity: .55; pointer-events: none; user-select: none; }
+.vreveal { position: absolute; inset: 0; margin: auto; width: fit-content; height: fit-content; opacity: 0; pointer-events: none; transition: opacity .15s; background: rgba(40, 36, 52, .9); }
+.vreveal:hover { background: rgba(62, 56, 78, .95); }
+.vcard.veil .vwrap:hover .vreveal, .vcard.veil .vreveal:focus-visible { opacity: 1; pointer-events: auto; }
+.btn.toggle.on { background: rgba(255, 255, 255, .2); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .45); }
 .vcard .w small { font: 11px var(--font); color: var(--fg-3); margin-left: 8px; }
 .vcard .m { color: var(--fg); border-radius: 6px; padding: 2px 6px; margin: 0 -6px; min-height: 22px; outline: none; }
 .vcard .m:empty::before { content: "点击填写释义"; color: var(--fg-3); }
@@ -392,5 +400,5 @@ select option { background: #2b2636; }
   .view-focus #meta { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .line, .f-cur, .drawer, .timed .seg, .line.active .ann, .dots.idle .dots-g, .line.gap.active .dots { transition: none; animation: none; }
+  .vbody, .line, .f-cur, .drawer, .timed .seg, .line.active .ann, .dots.idle .dots-g, .line.gap.active .dots { transition: none; animation: none; }
 }

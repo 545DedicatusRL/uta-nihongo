@@ -1091,26 +1091,90 @@ $('#queue-repeat').addEventListener('click', () => api.post('/api/queue/repeat',
 
 // ---------------- 词汇书 ----------------
 let vocabList = [];
+// order：打乱后的顺序（词条 id 的数组）；null = 默认顺序，也就是按添加时间，新的在前
+// memory：记忆模式（打乱 + 遮住释义）；revealed：记忆模式下已经点开看过释义的词
+const vocab = { order: null, memory: false, revealed: new Set() };
 async function loadVocab() {
   try { vocabList = await api.get('/api/vocab'); } catch { vocabList = []; }
   renderVocab();
 }
-function renderVocab() {
+// 当前应该显示哪些词、按什么顺序
+function vocabShown() {
   const q = $('#vocab-search').value.trim().toLowerCase();
   const list = vocabList.filter((v) => !q || [v.word, v.reading, v.meaning, v.line, v.song?.name].join('\n').toLowerCase().includes(q));
+  if (!vocab.order) return list;
+  const rank = new Map(vocab.order.map((id, i) => [id, i]));
+  return [...list].sort((x, y) => (rank.get(x.id) ?? -1) - (rank.get(y.id) ?? -1)); // 打乱之后才加进来的词排最前
+}
+const veiled = (id) => vocab.memory && !vocab.revealed.has(id);
+function renderVocab() {
+  const list = vocabShown();
   $('#vocab-count').textContent = vocabList.length ? `· ${vocabList.length}` : '';
   $('#vocab-list').innerHTML = list.length ? list.map((v) => {
     const sentence = v.surface && v.line?.includes(v.surface) ? esc(v.line).replace(esc(v.surface), `<mark>${esc(v.surface)}</mark>`) : esc(v.line);
-    return `<div class="vcard" data-id="${esc(v.id)}">
+    return `<div class="vcard${veiled(v.id) ? ' veil' : ''}" data-id="${esc(v.id)}">
       <div class="vdel-zone"><button class="vdel" data-act="del" aria-label="删除这个词" title="删除"><span class="x">✕</span><span class="ext"><span>删除</span></span></button></div>
       <div class="w" lang="ja"><ruby>${esc(v.word)}<rt>${esc(v.reading !== v.word ? v.reading : '')}</rt></ruby><small>${esc(v.level || '')}</small></div>
-      <div class="m" contenteditable="plaintext-only" spellcheck="false">${esc(v.meaning)}</div>
-      <div class="s" lang="ja">${sentence}</div>${v.zh ? `<div class="z">${esc(v.zh)}</div>` : ''}
+      <div class="vwrap"><div class="vbody">
+        <div class="m" contenteditable="plaintext-only" spellcheck="false">${esc(v.meaning)}</div>
+        <div class="s" lang="ja">${sentence}</div>${v.zh ? `<div class="z">${esc(v.zh)}</div>` : ''}
+      </div><button class="btn small vreveal" data-act="reveal">展示释义</button></div>
       <div class="f"><span>${esc([v.song?.name, v.song?.artist].filter(Boolean).join(' — '))}</span>
         <button class="btn small" data-act="play" title="播放这一句">▶ 听这句</button></div>
     </div>`;
-  }).join('') : `<div class="empty">${vocabList.length ? '没有匹配的单词' : '词汇书还是空的。<br>打开「辞书」模式，点选歌词里的词就能添加。'}</div>`;
+  }).join('') : `<div class="empty">${vocabList.length ? '没有匹配的单词' : '词汇书还是空的。<br>打开「记词」模式，点选歌词里的词就能添加。'}</div>`;
 }
+// 只换顺序 / 遮挡状态、词条本身没变时：挪动现有的卡片而不是重画，
+// 这样卡片能从原位置滑到新位置，释义的模糊也能渐变
+function reorderVocab() {
+  const box = $('#vocab-list');
+  const cards = new Map([...box.children].filter((el) => el.dataset.id).map((el) => [el.dataset.id, el]));
+  const list = vocabShown();
+  if (cards.size !== list.length || list.some((v) => !cards.has(v.id))) return renderVocab();
+  const still = noMotion.matches;
+  const before = new Map();
+  if (!still) for (const [id, el] of cards) before.set(id, el.getBoundingClientRect().top);
+  for (const an of box.getAnimations({ subtree: true })) if (an.id === 'vmove') an.cancel();
+  box.append(...list.map((v) => cards.get(v.id)));
+  for (const [id, el] of cards) el.classList.toggle('veil', veiled(id));
+  if (still) return;
+  const view = box.getBoundingClientRect();
+  const inView = (y, h) => y + h > view.top - 80 && y < view.bottom + 80;
+  let n = 0;
+  for (const v of list) {
+    const el = cards.get(v.id), r = el.getBoundingClientRect(), from = before.get(v.id);
+    if (Math.abs(from - r.top) < 1 || (!inView(r.top, r.height) && !inView(from, r.height))) continue; // 没动的、全程看不见的不用动画
+    el.animate([{ translate: `0 ${(from - r.top).toFixed(1)}px` }, { translate: '0 0' }],
+      { id: 'vmove', duration: SPRING.ms, easing: SPRING.easing, delay: Math.min(n++, 10) * 22, fill: 'backwards' });
+  }
+}
+const shuffledIds = () => {
+  const ids = vocabList.map((v) => v.id);
+  for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+  // 只有两三个词时，洗出来碰巧和原来一样就再换一下，免得点了像没反应
+  if (ids.length > 1 && ids.every((id, i) => id === (vocab.order || vocabList.map((v) => v.id))[i])) ids.push(ids.shift());
+  return ids;
+};
+function syncVocabButtons() {
+  for (const [sel, on] of [['#vocab-memory', vocab.memory], ['#vocab-shuffle', !!vocab.order]]) {
+    $(sel).classList.toggle('on', on);
+    $(sel).setAttribute('aria-pressed', on);
+  }
+}
+// 记忆模式：打开 = 打乱 + 遮住所有释义；关闭 = 全部显示，回到默认顺序
+$('#vocab-memory').addEventListener('click', () => {
+  vocab.memory = !vocab.memory;
+  vocab.revealed.clear();
+  vocab.order = vocab.memory ? shuffledIds() : null;
+  syncVocabButtons();
+  reorderVocab();
+});
+// 随机顺序：打开 = 打乱一次；关闭 = 回到默认顺序（不影响记忆模式的遮挡）
+$('#vocab-shuffle').addEventListener('click', () => {
+  vocab.order = vocab.order ? null : shuffledIds();
+  syncVocabButtons();
+  reorderVocab();
+});
 $('#vocab-search').addEventListener('input', renderVocab);
 // 鼠标离开卡片：还没确认的「删除」收回成 ×
 $('#vocab-list').addEventListener('mouseleave', (e) => {
@@ -1131,6 +1195,11 @@ $('#vocab-list').addEventListener('click', async (e) => {
   if (!btn) return;
   const id = btn.closest('.vcard').dataset.id;
   const v = vocabList.find((x) => x.id === id);
+  if (btn.dataset.act === 'reveal') {
+    vocab.revealed.add(id);
+    btn.closest('.vcard').classList.remove('veil');
+    return;
+  }
   if (btn.dataset.act === 'del') {
     // 第一次点：× 展开成「删除」；再点一次才真的删
     if (!btn.classList.contains('armed')) {
