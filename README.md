@@ -2,9 +2,29 @@
 
 用本机的 Apple Music 播放日语歌，同步显示带假名、中文翻译、语法 / 词汇标注的歌词。
 
+## 安装
+
+需要：一台 Mac、Apple Music 资料库里有歌、[Node.js](https://nodejs.org)（装「LTS」版即可）。
+
+打开「终端」，粘贴下面这一行，回车：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/545DedicatusRL/uta-nihongo/main/install.sh | bash
+```
+
+它会把程序装到 `~/Applications/唱歌学日语`，装好依赖，在桌面放一个「唱歌学日语」图标并启动。第一次启动时系统会问是否允许它控制「音乐」，点 **允许**。
+
+**更新**：再运行一次同一行。只换程序文件，你的词汇书、设置和缓存（`data/` 文件夹）不动。
+
+想装到别的位置，在前面加上 `UTA_DIR=`，例如 `curl -fsSL …/install.sh | UTA_DIR=~/uta bash`。
+
+也可以用 git：`git clone https://github.com/545DedicatusRL/uta-nihongo.git`，然后双击里面的 `唱歌学日语.command`。
+
 ## 启动
 
-双击 `唱歌学日语.command`（在终端窗口里运行，关闭窗口即退出；或在终端里 `npm start`，然后打开 http://localhost:3939)
+装好以后双击桌面上的「唱歌学日语」图标。
+
+没有图标时，双击程序文件夹里的 `唱歌学日语.command`（在终端窗口里运行，关闭窗口即退出；或在终端里 `npm start`，然后打开 http://localhost:3939)
 
 第一次运行时，程序会在桌面放一个「唱歌学日语」图标，以后双击它即可：程序在后台启动并打开界面，不会弹出终端窗口。运行期间程序坞里有它的图标，点一下回到界面。第一次从图标启动时，系统可能会询问是否允许它访问「文稿」文件夹、控制 Music，点允许即可。
 
