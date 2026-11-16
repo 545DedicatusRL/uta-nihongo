@@ -3,10 +3,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import {
   ROOT, getSettings, saveSettings, getSongMeta, saveSongMeta,
-  getUserDict, saveUserDict, getVocab, saveVocab, readJSON, writeJSON,
+  getUserDict, saveUserDict, getVocab, saveVocab, readJSON, writeJSON, dataPath,
 } from './store.js';
 import * as music from './music.js';
 import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
@@ -14,7 +14,7 @@ import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
 import { createQueue } from './queue.js';
 import { showUI, installedBrowsers, pickBrowser } from './window.js';
-import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError } from './annotate.js';
+import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError, resetDictCache } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
 
@@ -114,6 +114,21 @@ const queue = createQueue({
   load: () => (NO_MUSIC ? null : readJSON('queue.json', null)),
   save: (q) => { if (!NO_MUSIC) writeJSON('queue.json', q); },
 });
+
+// 缓存：能自动重新取回来的东西——歌词、封面、词典查询结果。
+// 不算缓存（清除时不动）：词汇书、每首歌的读音修正 / 时间偏移 / 歌词源选择、设置、AI 讲解（重新生成要花钱）
+const CACHE_DIRS = ['lyrics', 'artwork'];
+const CACHE_FILES = ['dict-cache-v2.json'];
+function cacheFiles() {
+  const out = [];
+  for (const d of CACHE_DIRS) {
+    let names = [];
+    try { names = fs.readdirSync(dataPath(d)); } catch { /* 还没有这个文件夹 */ }
+    for (const n of names) out.push(dataPath(d, n));
+  }
+  for (const f of CACHE_FILES) out.push(dataPath(f));
+  return out.flatMap((file) => { try { const st = fs.statSync(file); return st.isFile() ? [{ file, size: st.size }] : []; } catch { return []; } });
+}
 
 const sseClients = new Set();
 // 其中由程序自己打开的界面窗口（地址带 ?app=1）。别的页面（比如另外在浏览器里手动打开的）不算，
@@ -290,6 +305,22 @@ const routes = {
     send(res, 200, { ok: true });
     for (const c of sseClients) c.write(`data: ${JSON.stringify({ bye: true })}\n\n`);
     setTimeout(() => { music.stopWatcher(); process.exit(0); }, 200);
+  },
+  // 打开「系统设置 → 隐私与安全性 → 自动化」（第一次的授权询问被点了「不允许」之后，只能到这里手动打开）
+  'POST /api/open-privacy': (req, res) => {
+    execFile('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_Automation'], () => {});
+    send(res, 200, { ok: true });
+  },
+  'GET /api/cache': (req, res) => {
+    const files = cacheFiles();
+    send(res, 200, { files: files.length, bytes: files.reduce((n, f) => n + f.size, 0) });
+  },
+  'POST /api/cache/clear': (req, res) => {
+    const files = cacheFiles();
+    let bytes = 0, removed = 0;
+    for (const f of files) { try { fs.unlinkSync(f.file); bytes += f.size; removed++; } catch { /* 删不掉的跳过 */ } }
+    resetDictCache();
+    send(res, 200, { ok: true, files: removed, bytes });
   },
   'GET /api/settings': (req, res) => {
     const s = getSettings();

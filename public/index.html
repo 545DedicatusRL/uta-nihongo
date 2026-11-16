@@ -164,7 +164,7 @@
     <button class="btn" data-off="0.5">延后 0.5</button>
   </div>
   <label class="chk"><input type="checkbox" id="offset-tap"> 敲击对齐：点击某一句歌词 = 这句现在开始唱</label>
-  <div class="pop-foot"><span class="muted">快捷键 [ 提前　] 延后，按歌曲分别保存</span><button class="btn small" id="offset-reset">归零</button></div>
+  <div class="pop-foot"><span class="muted" id="offset-keys">按歌曲分别保存</span><button class="btn small" id="offset-reset">归零</button></div>
 </div>
 
 <!-- 读音编辑 -->
@@ -214,20 +214,27 @@
       <div class="form-row"><span>数据来源</span>
         <select id="set-source"><option value="auto">有 AI 讲解时优先用 AI</option><option value="builtin">只用内置规则 + 词典</option></select></div>
 
-      <h3>AI 讲解（可选）</h3>
+      <h3>快捷键</h3>
+      <div class="keys" id="set-keys"></div>
+      <div class="form-row"><span class="muted" style="width:auto;flex:1">点右边的按键，再按下想用的新按键。按 Esc 取消，按退格键清空。Esc（关闭浮层 / 退出模式）固定不变。</span><button class="btn small" id="set-keys-reset">恢复默认</button></div>
+
+      <h3 class="fold"><button class="fold-btn" id="set-ai-toggle" aria-expanded="false" aria-controls="set-ai-body"><i></i>AI 讲解（可选）</button></h3>
+      <div id="set-ai-body" hidden>
       <p class="muted">内置标注使用本地语法规则库；词汇的中文释义来自有道日汉词典，JLPT 级别和英文释义来自 Jisho。填入 Claude API Key 后，可以为整首歌生成贴合歌词语境的释义和语法讲解，结果会缓存在本机。</p>
       <div class="form-row"><span>API Key</span><input id="set-key" type="password" placeholder="sk-ant-…" autocomplete="off"><span class="muted" id="set-key-state"></span></div>
       <div class="form-row"><span>模型</span><input id="set-model" type="text" autocomplete="off"></div>
       <div class="form-row"><span></span><button class="btn" id="set-save">保存</button><button class="btn primary" id="set-ai-run">为当前歌曲生成 AI 讲解</button><span class="muted" id="set-ai-state"></span></div>
+      </div>
 
       <h3>说明</h3>
       <p class="muted">播放由本机的 Apple Music 完成，本程序只读取资料库和播放进度。歌词来自网易云音乐 / QQ 音乐；假名由本地词库（kuromoji）标注，并用歌词源自带的罗马音自动纠正。词汇书、读音修正、时间偏移都保存在程序目录的 data 文件夹里。</p>
       <p class="muted" id="about-version"></p>
-      <p class="muted">快捷键：空格 播放/暂停　←/→ 上一句/下一句　F 切换样式　D 辞书模式　E 修改模式　[ ] 歌词对齐　Esc 关闭</p>
 
       <h3>程序</h3>
       <div class="form-row"><span>界面窗口</span><select id="set-browser"></select><button class="btn small" id="set-browser-apply" hidden>现在就换</button></div>
       <p class="muted">Chrome、Edge 这类浏览器能把界面开成独立窗口（没有地址栏和标签页）；系统默认浏览器只能当普通标签页打开。</p>
+      <div class="form-row"><span>缓存</span><button class="btn" id="set-cache">清除缓存</button><span class="muted" id="set-cache-info"></span></div>
+      <p class="muted">缓存是歌词、封面和词典查询的结果，清掉后用到时会重新下载。词汇书、读音修正、时间对齐、设置和 AI 讲解不受影响。</p>
       <div class="form-row"><span>退出</span><button class="btn" id="set-quit">退出唱歌学日语</button><span class="muted">程序在后台运行，关掉界面窗口不会退出；Apple Music 不受影响。</span></div>
     </div>
   </div>

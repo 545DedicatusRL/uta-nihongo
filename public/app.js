@@ -68,7 +68,10 @@ function onState(s) {
 function showIdle(s) {
   if (s.waiting) setStatus('正在等待 Apple Music 响应…<br>如果系统弹出了「想要控制 Music」的提示，请点「允许」。<br><span class="muted">也可能是 Music 里有未关闭的对话框。</span>');
   else if (!s.running) setStatus('Apple Music 还没有打开。<br>打开它播放一首歌，或者从左上角的「资料库」里选一首。');
-  else if (s.err && /not authorized|不允许|-1743/.test(s.err)) setStatus('需要授权控制 Apple Music：<br>系统设置 → 隐私与安全性 → 自动化，允许本程序控制「音乐」。');
+  // 第一次的授权询问被点了「不允许」：系统不会再问第二次，要到系统设置里手动打开。打开后这里会自己恢复，不用重启
+  else if (s.errno === -1743 || (s.err && /not authori[sz]ed|-1743|授权|不允许/i.test(s.err))) {
+    setStatus('还没有允许本程序控制 Apple Music。<br>打开「系统设置 → 隐私与安全性 → 自动化」，找到「唱歌学日语」（从终端启动的话是「终端」），把它下面的「音乐」开关打开。<br><span class="muted">开关打开后这里会自动恢复，不用重启。</span><br><button class="btn" id="btn-privacy">打开系统设置</button>');
+  }
   else setStatus('在 Apple Music 里播放一首歌，或者从左上角的「资料库」里选一首。');
 }
 function clearSong(s) {
@@ -81,7 +84,12 @@ function clearSong(s) {
   setArt(null);
   showIdle(s);
 }
-const setStatus = (html) => { $('#status').innerHTML = html || ''; };
+// 状态每秒会来好几次：内容没变就不重画，否则里面的按钮刚按下就被换掉、点不中
+let statusHTML = null;
+const setStatus = (html) => { if (html === statusHTML) return; statusHTML = html; $('#status').innerHTML = html || ''; };
+$('#status').addEventListener('click', (e) => {
+  if (e.target.closest('#btn-privacy')) api.post('/api/open-privacy', {}).catch(() => toast('打不开系统设置，请手动打开：系统设置 → 隐私与安全性 → 自动化'));
+});
 
 // ---------------- 载入歌曲 ----------------
 function songURL(t, extra = '') {
@@ -1304,6 +1312,11 @@ async function openSettings() {
   $('#set-clear-senses').textContent = `清除这首歌里手动选的 ${picked} 个`;
   $('#set-levels').innerHTML = ['N5', 'N4', 'N3', 'N2', 'N1', 'x'].map((k) => `<label class="chk"><input type="checkbox" data-lv="${k}" ${prefs.levels[k] !== false ? 'checked' : ''}> ${k === 'x' ? '未分级' : k}</label>`).join(' ');
   $('#set-ai-state').textContent = S.song?.ai ? '当前歌曲已有 AI 讲解' : '';
+  setFold(false); // AI 讲解那一节每次打开设置时都是收起的
+  keyRec = null;
+  renderKeys();
+  disarmCache();
+  refreshCacheInfo();
   api.get('/api/info').then((i) => { $('#about-version').textContent = `版本 ${i.version || '未知'}　程序位置 ${i.root}`; }).catch(() => {});
   try {
     const s = await api.get('/api/settings');
@@ -1345,6 +1358,41 @@ async function saveSettings() {
   if (key) $('#set-key-state').textContent = `已保存（…${key.slice(-4)}）`;
 }
 $('#set-save').addEventListener('click', () => saveSettings().then(() => toast('设置已保存')).catch((e) => toast(e.message)));
+// AI 讲解一节：默认收起，点标题展开
+function setFold(open) {
+  $('#set-ai-body').hidden = !open;
+  $('#set-ai-toggle').setAttribute('aria-expanded', open);
+}
+$('#set-ai-toggle').addEventListener('click', () => setFold($('#set-ai-body').hidden));
+// 清除缓存：第一次点只是变成红色的确认，再点一次才真的清
+const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(n ? 1 : 0, Math.round(n / 1024))} KB`);
+let cacheTimer = 0;
+async function refreshCacheInfo() {
+  try { const c = await api.get('/api/cache'); $('#set-cache-info').textContent = c.files ? `现在有 ${c.files} 个文件，共 ${fmtBytes(c.bytes)}` : '现在没有缓存'; $('#set-cache').disabled = !c.files; }
+  catch { $('#set-cache-info').textContent = ''; }
+}
+function disarmCache() {
+  clearTimeout(cacheTimer);
+  const b = $('#set-cache');
+  b.classList.remove('danger');
+  b.textContent = '清除缓存';
+}
+$('#set-cache').addEventListener('click', async () => {
+  const b = $('#set-cache');
+  if (!b.classList.contains('danger')) {
+    b.classList.add('danger');
+    b.textContent = '再点一次确认清除';
+    cacheTimer = setTimeout(disarmCache, 5000); // 几秒没确认就收回
+    return;
+  }
+  disarmCache();
+  try {
+    const r = await api.post('/api/cache/clear', {});
+    toast(`已清除缓存：${r.files} 个文件，${fmtBytes(r.bytes)}`);
+  } catch (e) { toast(`清除失败：${e.message}`); }
+  refreshCacheInfo();
+});
+$('#set-cache').addEventListener('mouseleave', () => { if ($('#set-cache').classList.contains('danger')) { clearTimeout(cacheTimer); cacheTimer = setTimeout(disarmCache, 1500); } });
 // 界面窗口用哪个浏览器：选了就保存，下次打开界面时生效；也可以点「现在就换」马上用它重新打开
 $('#set-browser').addEventListener('change', async (e) => {
   try { await api.post('/api/settings', { browser: e.target.value }); } catch (err) { return toast(`保存失败：${err.message}`); }
@@ -1441,6 +1489,85 @@ function stepLine(dir) {
   while (S.lines[i]?.gap && i + dir >= 0 && i + dir < S.lines.length) i += dir;
   if (S.lines[i]) seekTo(S.lines[i].t + S.offset + 0.02);
 }
+// ---------------- 快捷键（可以在设置里改） ----------------
+// [编号, 名称, 默认按键, 做什么]。默认按键为空 = 默认不设，想用的话自己指定
+const KEY_ACTIONS = [
+  ['playpause', '播放 / 暂停', ' ', () => control('playpause')],
+  ['view', '切换 滚动 / 大字', 'f', () => setView(prefs.view === 'apple' ? 'focus' : 'apple')],
+  ['prevLine', '上一句', 'ArrowLeft', () => stepLine(-1)],
+  ['nextLine', '下一句', 'ArrowRight', () => stepLine(1)],
+  ['dict', '记词模式', 'd', () => setMode('dict')],
+  ['edit', '修改模式', 'e', () => setMode('edit')],
+  ['offsetMinus', '歌词提前 0.1 秒', '[', () => setOffset(S.offset - 0.1)],
+  ['offsetPlus', '歌词延后 0.1 秒', ']', () => setOffset(S.offset + 0.1)],
+  ['prevTrack', '上一首', '', () => control('prev')],
+  ['nextTrack', '下一首', '', () => control('next')],
+  ['shuffle', '随机播放', '', () => $('#btn-shuffle').click()],
+  ['queue', '播放列表', '', () => $('#btn-queue').click()],
+  ['library', '资料库', '', () => ($('#library').hidden ? openLibrary() : ($('#library').hidden = true))],
+  ['vocab', '词汇书', '', () => ($('#vocab').hidden ? $('#btn-vocab').click() : ($('#vocab').hidden = true))],
+].map(([id, label, def, run]) => ({ id, label, def, run }));
+// 字母不分大小写；其余按键用浏览器给的名字（' '、'ArrowLeft'、'['…）
+const normKey = (e) => (e.key.length === 1 ? e.key.toLowerCase() : e.key);
+const keyOf = (a) => prefs.keys?.[a.id] ?? a.def;
+const KEY_NAMES = { ' ': '空格', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Enter: '回车', Tab: 'Tab' };
+const keyLabel = (k) => (!k ? '未设置' : KEY_NAMES[k] || (k.length === 1 ? k.toUpperCase() : k));
+let keyMap = new Map();
+function applyKeys() {
+  keyMap = new Map(KEY_ACTIONS.filter((a) => keyOf(a)).map((a) => [keyOf(a), a]));
+  // 按钮上的提示也跟着当前的按键走
+  const hint = (id) => { const k = keyOf(KEY_ACTIONS.find((a) => a.id === id)); return k ? `（${keyLabel(k)}）` : ''; };
+  $('[data-view=apple]').title = `滚动歌词${hint('view')}`;
+  $('[data-view=focus]').title = `大字单句${hint('view')}`;
+  $('#btn-dict').title = `记词模式：点选歌词片段加入词汇书${hint('dict')}`;
+  $('#btn-edit').title = `修改模式：改读音、隐藏或恢复标注、换多义词的义项${hint('edit')}；再点一次退出`;
+  const m = keyOf(KEY_ACTIONS.find((a) => a.id === 'offsetMinus')), pl = keyOf(KEY_ACTIONS.find((a) => a.id === 'offsetPlus'));
+  $('#offset-keys').textContent = [m && `${keyLabel(m)} 提前`, pl && `${keyLabel(pl)} 延后`].filter(Boolean).join('　') + (m || pl ? '，' : '') + '按歌曲分别保存';
+}
+function renderKeys() {
+  $('#set-keys').innerHTML = KEY_ACTIONS.map((a) => {
+    const k = keyOf(a);
+    return `<div class="key-row"><span>${esc(a.label)}</span><button class="btn small key-btn${k ? '' : ' none'}" data-key="${a.id}">${esc(keyLabel(k))}</button></div>`;
+  }).join('');
+}
+function setKey(id, key) {
+  const a = KEY_ACTIONS.find((x) => x.id === id);
+  prefs.keys = { ...(prefs.keys || {}) };
+  // 这个键已经给了别的动作：让给新的，原来那个变成未设置
+  const other = key && KEY_ACTIONS.find((x) => x !== a && keyOf(x) === key);
+  if (other) { prefs.keys[other.id] = ''; toast(`「${other.label}」原来也用 ${keyLabel(key)}，已取消`); }
+  if (key === a.def) delete prefs.keys[id]; else prefs.keys[id] = key;
+  savePrefs();
+  applyKeys();
+  renderKeys();
+}
+// 改按键：点了某个按键按钮之后，下一次按键就是新的设定
+let keyRec = null;
+function stopKeyRec() { keyRec = null; renderKeys(); }
+$('#set-keys').addEventListener('click', (e) => {
+  const btn = e.target.closest('.key-btn');
+  if (!btn) return;
+  if (keyRec === btn.dataset.key) return stopKeyRec();
+  keyRec = btn.dataset.key;
+  renderKeys();
+  const now = $(`.key-btn[data-key="${keyRec}"]`);
+  now.classList.add('rec');
+  now.textContent = '按下按键…';
+});
+document.addEventListener('keydown', (e) => {
+  if (!keyRec) return;
+  e.preventDefault();
+  e.stopImmediatePropagation(); // 这次按键只用来设定，不触发它原来的功能（包括 Esc 关闭设置）
+  if (['Shift', 'Meta', 'Control', 'Alt', 'CapsLock'].includes(e.key)) return;
+  if (e.key === 'Escape') return stopKeyRec();
+  if (e.metaKey || e.ctrlKey || e.altKey) return toast('只能用单个按键，不支持组合键');
+  const id = keyRec;
+  keyRec = null;
+  setKey(id, e.key === 'Backspace' || e.key === 'Delete' ? '' : normKey(e));
+}, true);
+$('#set-keys-reset').addEventListener('click', () => { delete prefs.keys; savePrefs(); applyKeys(); stopKeyRec(); toast('快捷键已恢复默认'); });
+applyKeys();
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     hideSensePop();
@@ -1451,14 +1578,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.target.closest('input, select, textarea, [contenteditable]') || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === ' ') { e.preventDefault(); control('playpause'); }
-  else if (e.key === 'ArrowLeft') stepLine(-1);
-  else if (e.key === 'ArrowRight') stepLine(1);
-  else if (e.key === '[') setOffset(S.offset - 0.1);
-  else if (e.key === ']') setOffset(S.offset + 0.1);
-  else if (e.key === 'f' || e.key === 'F') setView(prefs.view === 'apple' ? 'focus' : 'apple');
-  else if (e.key === 'd' || e.key === 'D') setMode('dict');
-  else if (e.key === 'e' || e.key === 'E') setMode('edit');
+  const act = keyMap.get(normKey(e));
+  if (act) { e.preventDefault(); act.run(); }
 });
 addEventListener('resize', () => scrollToActive(true));
 

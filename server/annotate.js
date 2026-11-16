@@ -16,6 +16,9 @@ setInterval(() => {
   if (dirty) { dirty = false; writeJSON('dict-cache-v2.json', dictCache); }
 }, 4000).unref();
 
+// 清除缓存时用：把内存里的词典缓存也清掉（磁盘上的文件由调用方删除）
+export function resetDictCache() { dictCache = {}; dirty = false; }
+
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
 // 有道日汉词典：返回 { zh, r } 或 null（没有这个词）

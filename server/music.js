@@ -38,7 +38,7 @@ function run() {
           }
         } else { lastPid = null; }
       }
-    } catch (e) { s.err = String(e); }
+    } catch (e) { s.err = String(e); if (e && e.errorNumber) s.errno = e.errorNumber; } // errno -1743 = 用户没有允许本程序控制 Music
     s.ts = Date.now();
     out.writeData($(JSON.stringify(s) + '\\n').dataUsingEncoding($.NSUTF8StringEncoding));
     tick++;
