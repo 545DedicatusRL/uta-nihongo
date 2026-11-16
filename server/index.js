@@ -21,7 +21,9 @@ const PORT = Number(process.env.PORT) || 3939;
 // 版本信息：电脑上可能有不止一份程序，界面和启动脚本靠它分辨正在运行的是哪一份
 function readVersion() {
   try {
-    return execFileSync('git', ['-C', ROOT, 'log', '-1', '--format=%h · %cs'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const git = (...args) => execFileSync('git', ['-C', ROOT, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const tags = git('tag', '--points-at', 'HEAD').split('\n').filter(Boolean).join(' '); // 打在这个版本上的标记（v1.0.0、ob-…）
+    return git('log', '-1', '--format=%h · %cs') + (tags ? ` · ${tags}` : '');
   } catch {
     try { return 'v' + JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version; } catch { return ''; }
   }

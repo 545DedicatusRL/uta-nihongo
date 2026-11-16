@@ -775,7 +775,9 @@ function dictClick(e) {
     else if (u1 === s.b) s.b = u0;
     else S.sel = { li, a: u0, b: u1 };
   } else { s.a = Math.min(s.a, u0); s.b = Math.max(s.b, u1); }
-  if (prefs.dictPause && S.player?.state === 'playing') { S.pausedByDict = true; control('pause'); }
+  // 再点一次把选中的词取消掉：如果是选词时自动暂停的，接着放
+  if (!S.sel) resumeIfPausedByDict();
+  else if (prefs.dictPause && S.player?.state === 'playing') { S.pausedByDict = true; control('pause'); }
   paintSelection();
   updateDictBar(true);
 }

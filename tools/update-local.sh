@@ -37,6 +37,8 @@ fi
 OK=1
 RUN_ROOT="$(info | field root)"; RUN_VER="$(info | field version)"
 HEAD_VER="$(git log -1 --format='%h · %cs' 2>/dev/null)"
+HEAD_TAGS="$(git tag --points-at HEAD 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+if [ -n "$HEAD_VER" ] && [ -n "$HEAD_TAGS" ]; then HEAD_VER="$HEAD_VER · $HEAD_TAGS"; fi
 if [ "$RUN_ROOT" = "$HERE" ]; then echo "运行中：$RUN_VER（$RUN_ROOT）"; else echo "✗ 运行中的不是这一份：${RUN_ROOT:-没有在运行}"; OK=0; fi
 if [ -n "$HEAD_VER" ] && [ "$RUN_VER" != "$HEAD_VER" ]; then echo "✗ 版本不一致：代码是 $HEAD_VER"; OK=0; fi
 [ -n "$(git status --porcelain 2>/dev/null)" ] && echo "（注意：有未提交的改动，运行的是磁盘上的当前文件）"
