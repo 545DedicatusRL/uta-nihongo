@@ -141,6 +141,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .line.gap.active .dots, #f-cur .dots { opacity: 1; }
 /* 先等上下的歌词分开、空行让出来，三个点再在空行中间淡入 */
 .line.gap.active .dots { animation: dots-in .7s ease-out .5s backwards; }
+#f-cur .dots:not(.idle) { animation: dots-in .7s ease-out .4s backwards; } /* 大字样式：等上一句淡出得差不多了再出现 */
 @keyframes dots-in { from { opacity: 0; } }
 .dots-g { display: inline-flex; gap: 11px; align-items: center; transform: scale(.88); will-change: transform, opacity; }
 .dots i { width: 15px; height: 15px; border-radius: 50%; background: #fff; opacity: calc(.28 + .72 * var(--p, 0)); transform: scale(calc(.84 + .16 * var(--p, 0))); }
@@ -405,5 +406,5 @@ select option { background: #2b2636; }
   .view-focus #meta { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .vbody, .line, .f-cur, .drawer, .timed .fu, .line.active .ann, .dots.idle .dots-g, .line.gap.active .dots { transition: none; animation: none; }
+  .vbody, .line, .f-cur, .drawer, .timed .fu, .line.active .ann, .dots.idle .dots-g, .line.gap.active .dots, #f-cur .dots { transition: none; animation: none; }
 }

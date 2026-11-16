@@ -217,11 +217,24 @@ function renderFocus() {
   $('#f-next').innerHTML = plain(next);
   $('#f-next').dataset.i = next ? S.lines.indexOf(next) : '';
   const cur = $('#f-cur');
+  // 大字样式下从歌词进入间奏：原来那句（连同下面的标注）不直接消失，留一份在原地淡出，三个点随后再出现
+  const fading = line?.gap && prefs.view === 'focus' && cur.querySelector('.tok') && !noMotion.matches && !document.hidden
+    ? [cur, $('#f-ann')].filter((el) => el.childElementCount).map((el) => ({ el, rect: el.getBoundingClientRect(), copy: el.cloneNode(true) })) : [];
   cur.className = `f-cur${line?.ct ? ' timed' : ''}`;
   cur.innerHTML = line ? lineBody(line, i) : (S.lines.length ? '<div class="jp"><span class="dots idle"><span class="dots-g"><i></i><i></i><i></i></span></span></div>' : '');
   cur.style.animation = 'none'; void cur.offsetWidth; cur.style.animation = '';
   paintAnnotations();
   paintSelection();
+  for (const { rect, copy } of fading) {
+    // 这份拷贝保留原来的 id 和 class（样式才完全一样），放在真身后面，所以按 id 找到的仍然是真身
+    copy.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;margin:0;max-width:none;pointer-events:none;animation:none;`;
+    copy.setAttribute('aria-hidden', 'true');
+    $('#focus-inner').append(copy);
+    copy.animate([{ opacity: 1, transform: 'none', filter: 'blur(0)' }, { opacity: 0, transform: 'translateY(-10px) scale(.985)', filter: 'blur(5px)' }],
+      { duration: 520, easing: 'cubic-bezier(.3, .1, .3, 1)', fill: 'forwards' }).onfinish = () => copy.remove();
+  }
+  // 上一句 / 下一句的小字会因为中间变矮而挪到新位置：让它们稍后再淡入，不和正在淡出的大字叠在一起
+  if (fading.length) for (const id of ['#f-prev', '#f-next']) $(id).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 450, delay: 220, easing: 'ease-out', fill: 'backwards' });
 }
 
 // ---------------- 同步：当前行 / 逐字填充 / 进度条 ----------------
