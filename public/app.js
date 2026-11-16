@@ -372,11 +372,10 @@ function dotsPlan(line) {
   const out = Math.min(1.1, D * 0.22);          // 收尾（胀大 → 淡出）用的时间
   const full = Math.max(0.3, D - out - 0.12);   // 读满的时刻
   const tau = clamp(full * 0.3, 1.5, 4);        // 呼吸加快的势头多久平下来
-  let f0 = 1 / 5, f1 = 1 / 4.5;                 // 呼吸的频率：约 4.5 秒一次，开头稍慢
+  const f0 = 1 / 5, f1 = 1 / 4.5;               // 呼吸的频率：约 4.5 秒一次，开头稍慢
+  // 只保证「读满时正好在最大处」（paintDots 里从读满的时刻往回数）。开头落在呼吸的哪一段不去凑：
+  // 那时三个点还没淡入，看不出来；要是硬凑成整数次半，短间奏的快慢就只能在几个固定档位里跳
   const count = (e) => f1 * e - (f1 - f0) * tau * (1 - Math.exp(-e / tau));
-  // 微调快慢，让整段正好是「N 次半」：从最小处开始，读满时落在最大处
-  const k = (Math.max(1, Math.round(count(full) - 0.5)) + 0.5) / count(full);
-  f0 *= k; f1 *= k;
   return { out, full, span: full / 3, count, total: count(full) };
 }
 function paintDots(f, t) {
