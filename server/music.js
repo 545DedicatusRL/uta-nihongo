@@ -135,7 +135,13 @@ function run(argv) {
   let genre = [], comp = [];
   try { genre = t.genre(); } catch (e) {}
   try { comp = t.compilation(); } catch (e) {}
-  return JSON.stringify({ n: t.name(), ar: t.artist(), al: t.album(), d: t.duration(), p: t.persistentID(), a: added, g: genre, c: comp });
+  // 专辑歌手 / 碟号 / 曲序 / 年份：给「全部专辑」用
+  let aa = [], tn = [], dn = [], y = [];
+  try { aa = t.albumArtist(); } catch (e) {}
+  try { tn = t.trackNumber(); } catch (e) {}
+  try { dn = t.discNumber(); } catch (e) {}
+  try { y = t.year(); } catch (e) {}
+  return JSON.stringify({ n: t.name(), ar: t.artist(), al: t.album(), d: t.duration(), p: t.persistentID(), a: added, g: genre, c: comp, aa: aa, tn: tn, dn: dn, y: y });
 }`;
 const libCache = new Map();
 export async function getLibrary(playlist = '', refresh = false) {
@@ -146,6 +152,7 @@ export async function getLibrary(playlist = '', refresh = false) {
     pid, name: raw.n[i] || '', artist: raw.ar[i] || '', album: raw.al[i] || '',
     duration: raw.d[i] || 0, added: raw.a[i] || 0,
     genre: raw.g?.[i] || '', comp: raw.c?.[i] ? 1 : 0,
+    albumArtist: raw.aa?.[i] || '', no: raw.tn?.[i] || 0, disc: raw.dn?.[i] || 0, year: raw.y?.[i] || 0,
   }));
   libCache.set(playlist, { at: Date.now(), tracks });
   return tracks;
@@ -166,6 +173,37 @@ export async function getPlaylists() {
 }
 
 // ---------- 封面 ----------
+// 专辑列表用的小图：一次只取 2 张（每张都要问一次 Music），同一张同时只取一次；缩到 160px 存在旁边
+const thumbJobs = new Map();
+const thumbWait = [];
+let thumbBusy = 0;
+function thumbPump() {
+  while (thumbBusy < 2 && thumbWait.length) {
+    const { pid, done } = thumbWait.shift();
+    thumbBusy++;
+    makeThumb(pid).catch(() => null).then((r) => { thumbBusy--; thumbJobs.delete(pid); done(r); thumbPump(); });
+  }
+}
+async function makeThumb(pid) {
+  const file = dataPath('artwork', `${safeName(pid)}.t.jpg`);
+  if (fs.existsSync(file) && fs.statSync(file).size > 0) return { file, type: 'image/jpeg' };
+  const full = await getArtwork(pid, false);
+  if (!full) return null;
+  await new Promise((resolve, reject) => execFile('sips', ['-s', 'format', 'jpeg', '-Z', '160', full.file, '--out', file], { timeout: 15000 }, (err) => (err ? reject(err) : resolve())));
+  return fs.existsSync(file) ? { file, type: 'image/jpeg' } : full;
+}
+export function getThumb(pid) {
+  const file = dataPath('artwork', `${safeName(pid)}.t.jpg`);
+  if (fs.existsSync(file) && fs.statSync(file).size > 0) return Promise.resolve({ file, type: 'image/jpeg' });
+  let job = thumbJobs.get(pid);
+  if (!job) {
+    job = new Promise((done) => { thumbWait.push({ pid, done }); });
+    thumbJobs.set(pid, job);
+    thumbPump();
+  }
+  return job;
+}
+
 // 返回 { file, type }，没有封面时返回 null
 export async function getArtwork(pid, isCurrent) {
   const file = dataPath('artwork', `${safeName(pid)}.img`);

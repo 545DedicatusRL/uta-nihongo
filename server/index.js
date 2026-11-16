@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { execFileSync, execFile } from 'node:child_process';
 import {
   ROOT, getSettings, saveSettings, getSongMeta, saveSongMeta,
-  getUserDict, saveUserDict, getVocab, saveVocab, readJSON, writeJSON, dataPath,
+  getUserDict, saveUserDict, getVocab, saveVocab, getMarks, saveMarks, readJSON, writeJSON, dataPath,
 } from './store.js';
 import * as music from './music.js';
 import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
@@ -162,11 +162,32 @@ const routes = {
   'GET /api/library': async (req, res, q) => send(res, 200, await music.getLibrary(q.get('playlist') || '', q.has('refresh'))),
   'GET /api/playlists': async (req, res) => send(res, 200, await music.getPlaylists()),
   'GET /api/artwork': async (req, res, q) => {
-    if (process.env.UTA_NO_MUSIC) return send(res, 404, { error: 'no music' });
-    const art = await music.getArtwork(q.get('pid') || '', q.has('current'));
+    // 调试时（UTA_NO_MUSIC）当前曲目是假的，没有封面可取；按编号取资料库里的封面只是读，不受影响
+    if (process.env.UTA_NO_MUSIC && q.has('current')) return send(res, 404, { error: 'no music' });
+    const art = q.has('thumb') ? await music.getThumb(q.get('pid') || '') : await music.getArtwork(q.get('pid') || '', q.has('current'));
     if (!art) return send(res, 404, { error: 'no artwork' });
     res.writeHead(200, { 'Content-Type': art.type, 'Cache-Control': 'max-age=86400' });
     fs.createReadStream(art.file).pipe(res);
+  },
+  // 「仅日文」的手动标记（按歌手）。ja: true / false = 标为日文 / 不是日文，null = 恢复自动判断；all = 整份替换
+  'GET /api/marks': (req, res) => send(res, 200, getMarks()),
+  'POST /api/marks': async (req, res) => {
+    const { artist, ja, all } = await readBody(req);
+    let marks = getMarks();
+    if (all && typeof all === 'object') {
+      marks = {};
+      for (const m of Object.values(all)) {
+        const name = String(m?.name || '').trim();
+        if (name) marks[name.toLowerCase()] = { name, ja: !!m.ja, at: Number(m.at) || Date.now() };
+      }
+    } else {
+      const name = String(artist || '').trim();
+      if (!name) return send(res, 400, { error: '缺少歌手名' });
+      if (ja === null || ja === undefined) delete marks[name.toLowerCase()];
+      else marks[name.toLowerCase()] = { name, ja: !!ja, at: Date.now() };
+    }
+    saveMarks(marks);
+    send(res, 200, marks);
   },
   'POST /api/control': async (req, res) => {
     const { cmd, a, b } = await readBody(req);

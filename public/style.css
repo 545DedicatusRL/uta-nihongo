@@ -327,6 +327,64 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
 .track .a { grid-column: 1; color: var(--fg-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .track .d { grid-row: 1 / 3; grid-column: 2; align-self: center; color: var(--fg-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 .empty { color: var(--fg-3); text-align: center; padding: 40px 20px; }
+/* 资料库里的歌：右边多一个「日」——这位歌手算不算日文歌手。平时藏着，鼠标移到这一行才出现；手动标过的一直显示 */
+.track.lib { grid-template-columns: minmax(0, 1fr) auto auto; }
+.track.lib .d { grid-column: 3; }
+.track.lib .ja-btn { grid-row: 1 / 3; grid-column: 2; align-self: center; }
+.track.lib.num { grid-template-columns: 20px minmax(0, 1fr) auto auto; }
+.track.lib.num .no { grid-row: 1 / 3; grid-column: 1; align-self: center; text-align: center; color: var(--fg-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.track.lib.num .n, .track.lib.num .a { grid-column: 2; }
+.track.lib.num .ja-btn { grid-column: 3; }
+.track.lib.num .d { grid-column: 4; }
+/* 只有一行字的（专辑里歌手和专辑歌手相同时不重复写）：歌名和两边的曲序、时长对齐在同一条线上 */
+.track.lib.one { grid-template-rows: auto; padding-top: 9px; padding-bottom: 9px; }
+.track.lib.one > * { grid-row: 1; align-self: center; }
+.ja-btn { position: relative; width: 22px; height: 22px; border-radius: 50%; font: 600 11px/1 var(--font-ja); color: var(--fg-3); border: 1px solid rgba(255, 255, 255, .28); opacity: 0; transition: opacity .15s, background .2s, color .2s, border-color .2s, scale .2s cubic-bezier(.3, .75, .2, 1); }
+.track:hover .ja-btn, .ja-btn:focus-visible, .ja-btn.manual { opacity: 1; }
+.ja-btn:hover { scale: 1.12; color: var(--fg); border-color: rgba(255, 255, 255, .6); }
+.ja-btn.on { background: rgba(255, 255, 255, .2); border-color: transparent; color: var(--fg); }
+.ja-btn.manual.on { background: #fff; color: #2a2433; }
+.ja-btn.manual:not(.on) { color: var(--fg-3); border-color: rgba(255, 255, 255, .4); }
+.ja-btn.manual:not(.on)::after { content: ''; position: absolute; left: 3px; right: 3px; top: 50%; height: 1.5px; margin-top: -.75px; background: currentColor; rotate: -45deg; border-radius: 1px; }
+/* 全部专辑：封面 + 专辑名 + 歌手和曲目数 */
+.album { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 1px 12px; align-items: center; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+.album:hover { background: rgba(255, 255, 255, .08); }
+.album .cover { grid-row: 1 / 3; }
+.album .n { align-self: end; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.album .a { grid-column: 2; align-self: start; color: var(--fg-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.album .go { grid-row: 1 / 3; grid-column: 3; color: var(--fg-3); font-size: 18px; line-height: 1; transition: translate .2s cubic-bezier(.3, .75, .2, 1), color .2s; }
+.album:hover .go { translate: 3px 0; color: var(--fg-2); }
+.cover { position: relative; width: 44px; height: 44px; border-radius: 6px; overflow: hidden; background: rgba(255, 255, 255, .09); display: grid; place-items: center; flex: none; }
+.cover::before { content: '♪'; color: var(--fg-3); font-size: 16px; }
+.cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .3s; }
+.cover img.ok { opacity: 1; }
+/* 点进一张专辑后，列表上方的那一行：返回 + 封面 + 专辑信息（不跟着列表滚动） */
+#lib-album { display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 8px; border-bottom: 1px solid var(--line); }
+#lib-album[hidden] { display: none; }
+#lib-album .back { width: 30px; height: 30px; border-radius: 50%; color: var(--fg-2); font-size: 22px; line-height: 1; display: grid; place-items: center; padding-bottom: 3px; flex: none; }
+#lib-album .back:hover { background: rgba(255, 255, 255, .12); color: var(--fg); }
+#lib-album .cover { width: 52px; height: 52px; border-radius: 7px; }
+#lib-album .tx { min-width: 0; flex: 1; }
+#lib-album .n { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#lib-album .a { color: var(--fg-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+/* 进出专辑：列表从前进 / 后退的方向滑进来一点 */
+#lib-list.nav-in { animation: lib-in .3s cubic-bezier(.2, .8, .2, 1); }
+#lib-list.nav-out { animation: lib-out .3s cubic-bezier(.2, .8, .2, 1); }
+#lib-album.nav-in { animation: lib-fade .3s ease-out; }
+@keyframes lib-in { from { opacity: 0; transform: translateX(22px); } }
+@keyframes lib-out { from { opacity: 0; transform: translateX(-22px); } }
+@keyframes lib-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { #lib-list.nav-in, #lib-list.nav-out, #lib-album.nav-in { animation: none; } }
+/* 设置里的「手动标记」名单 */
+.marks { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 4px; }
+.marks:empty { display: none; }
+.mark-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px; background: rgba(255, 255, 255, .08); border: 1px solid var(--line); font-size: 12.5px; }
+.mark-chip i { font-style: normal; font-size: 11px; color: var(--fg-3); }
+.mark-chip button { width: 18px; height: 18px; border-radius: 50%; color: var(--fg-3); font-size: 13px; line-height: 1; display: grid; place-items: center; }
+.mark-chip button:hover { background: rgba(255, 255, 255, .16); color: var(--fg); }
+/* 底部提示里的「撤销」 */
+#toast .toast-act { margin: -4px -8px -4px 12px; padding: 4px 10px; border-radius: 999px; background: rgba(42, 36, 51, .1); color: inherit; font: inherit; }
+#toast .toast-act:hover { background: rgba(42, 36, 51, .2); }
 
 .vcard { position: relative; padding: 10px 12px; border-radius: 10px; margin: 6px 4px; background: rgba(255, 255, 255, .06); border: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 /* 删除：鼠标移到卡片右上角时出现 ×；点一下展开成「删除」，再点一下确认 */

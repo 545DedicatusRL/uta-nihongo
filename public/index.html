@@ -104,6 +104,7 @@
       <label class="chk"><input type="checkbox" id="lib-ja" checked> 仅日文</label>
     </div>
   </div>
+  <div id="lib-album" hidden></div>
   <div class="drawer-body" id="lib-list"></div>
 </aside>
 
@@ -229,6 +230,10 @@
       <h3>说明</h3>
       <p class="muted">播放由本机的 Apple Music 完成，本程序只读取资料库和播放进度。歌词来自网易云音乐 / QQ 音乐；假名由本地词库（kuromoji）标注，并用歌词源自带的罗马音自动纠正。词汇书、读音修正、时间偏移都保存在程序目录的 data 文件夹里。</p>
       <p class="muted" id="about-version"></p>
+
+      <h3>资料库</h3>
+      <div class="form-row"><span>手动标记</span><span class="muted" id="set-marks-info" style="width:auto;flex:1"></span><button class="btn small" id="set-marks-clear" hidden>全部清除</button></div>
+      <div class="marks" id="set-marks"></div>
 
       <h3>程序</h3>
       <div class="form-row"><span>界面窗口</span><select id="set-browser"></select><button class="btn small" id="set-browser-apply" hidden>现在就换</button></div>

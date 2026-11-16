@@ -67,6 +67,14 @@ export function saveUserDict(d) {
   writeJSON('userdict.json', d);
 }
 
+// ---- 「仅日文」的手动标记：{ 歌手名小写: { name, ja, at } } ----
+export function getMarks() {
+  return readJSON('ja-marks.json', {});
+}
+export function saveMarks(m) {
+  writeJSON('ja-marks.json', m);
+}
+
 // ---- 词汇书 ----
 export function getVocab() {
   return readJSON('vocab.json', []);

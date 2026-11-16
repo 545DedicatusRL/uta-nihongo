@@ -981,7 +981,9 @@ $('#rp-cancel').addEventListener('click', () => { $('#reading-pop').hidden = tru
 $('#rp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#rp-save').click(); });
 
 // ---------------- 资料库 ----------------
-const lib = { tracks: null, loading: false, shown: 0, filtered: [] };
+// all = 整个资料库；tracks = 现在这份列表的来源（整个资料库，或某个播放列表）
+// view = 列表里现在放的是什么：'tracks' 歌曲 / 'albums' 专辑；album = 点进去的那张专辑
+const lib = { all: null, tracks: null, byPid: null, loading: false, shown: 0, filtered: [], view: 'tracks', album: null, back: null, marks: {} };
 // 「仅日文」的判断。元数据里没有语言字段，只能靠线索推断：
 //   1. 流派是日本的（Anime、J-Pop、歌謡曲…）
 //   2. 歌名 / 歌手名里有假名
@@ -989,9 +991,10 @@ const lib = { tracks: null, loading: false, shown: 0, filtered: [] };
 //   4. 同一位歌手只要有一首符合上面任意一条，他的其他歌也算（歌名被译成英文 / 罗马字的那些）
 // 流派明确是其他语种的（Mandopop、K-Pop…）一律不算，免得被第 4 条带进来。
 //   5. 歌手在内置的日本歌手名单里（ja-artists.js）——元数据全是英文、流派又是 Rock 之类的歌手靠这一条
+//   6. 用户手动标过的歌手（lib.marks，存在服务端）说了算，盖过上面所有规则
 const JA_GENRE = /^(anime|j-|kayokyoku|enka|japan)|vocaloid/i;
 const NOT_JA_GENRE = /mandopop|cantopop|c-pop|k-pop|chinese|korean|taiwan/i;
-const KANA = /[\u3040-\u30ff]/;
+const KANA = /[぀-ヿ]/;
 // 名单比对：忽略大小写、空格和标点；合作曲（A & B、A feat. B、A, B…）里有一位在名单上就算
 const normName = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 const JA_LISTED = new Set(JA_ARTISTS.map(normName));
@@ -1005,8 +1008,8 @@ function listedArtist(artist) {
   }
   return hit;
 }
+const artistKey = (t) => t.artist.trim().toLowerCase();
 function markJapanese(tracks) {
-  const artistKey = (t) => t.artist.trim().toLowerCase();
   const jaArtists = new Set();
   for (const t of tracks) {
     const g = t.genre || '';
@@ -1015,9 +1018,23 @@ function markJapanese(tracks) {
   }
   for (const t of tracks) {
     if (!t.ja && !NOT_JA_GENRE.test(t.genre || '') && jaArtists.has(artistKey(t))) t.ja = true;
+    const mark = lib.marks[artistKey(t)];
+    t.manual = !!mark;
+    if (mark) t.ja = mark.ja;
   }
   return tracks;
 }
+// 重新判断一遍（刚读完资料库、或手动标记变了之后）。
+// 播放列表里的歌以整个资料库的判断为准：只看列表自己那几首的话线索不够
+// （比如整张专辑的歌名都是英文译名，要靠同一位歌手的其他歌才认得出来）
+function applyJa() {
+  if (lib.all) { markJapanese(lib.all); lib.byPid = new Map(lib.all.map((t) => [t.pid, t])); }
+  if (lib.tracks && lib.tracks !== lib.all) {
+    markJapanese(lib.tracks);
+    for (const t of lib.tracks) { const known = lib.byPid?.get(t.pid); if (known) { t.ja = known.ja; t.manual = known.manual; } }
+  }
+}
+
 async function openLibrary() {
   $('#library').hidden = false;
   $('#lib-search').focus();
@@ -1025,62 +1042,231 @@ async function openLibrary() {
   lib.loading = true;
   $('#lib-list').innerHTML = '<div class="empty">正在读取 Apple Music 资料库…</div>';
   try {
-    const [tracks, playlists] = await Promise.all([api.get('/api/library'), api.get('/api/playlists').catch(() => [])]);
-    lib.tracks = markJapanese(tracks);
-    lib.jaByPid = new Map(tracks.map((t) => [t.pid, t.ja]));
-    $('#lib-playlist').innerHTML = '<option value="">全部歌曲</option>' + playlists.map((p) => `<option value="${esc(p.pid)}">${esc(p.name)}</option>`).join('');
+    const [tracks, playlists, marks] = await Promise.all([api.get('/api/library'), api.get('/api/playlists').catch(() => []), api.get('/api/marks').catch(() => ({}))]);
+    lib.marks = marks;
+    lib.all = lib.tracks = tracks;
+    applyJa();
+    $('#lib-playlist').innerHTML = '<option value="">全部歌曲</option><option value="@albums">全部专辑</option>'
+      + (playlists.length ? `<optgroup label="播放列表">${playlists.map((p) => `<option value="${esc(p.pid)}">${esc(p.name)}</option>`).join('')}</optgroup>` : '');
     renderLibrary();
   } catch (e) {
     $('#lib-list').innerHTML = `<div class="empty">读取资料库失败：${esc(e.message)}<br><br>请确认已允许本程序控制「音乐」（系统设置 → 隐私与安全性 → 自动化）。</div>`;
   }
   lib.loading = false;
 }
-function renderLibrary() {
+
+// ---- 专辑 ----
+// 同一张专辑 = 专辑名相同 + 专辑歌手相同。没填专辑歌手时：合辑算一张；否则按第一位歌手算
+// （「A feat. B」的那首不会被拆出去，不同歌手的同名专辑——Best 之类——也不会混在一起）
+const primaryArtist = (a) => a.split(ARTIST_SPLIT)[0].trim();
+const albumKey = (t) => (t.album ? `${t.album}\n${(t.albumArtist || (t.comp ? '' : primaryArtist(t.artist))).toLowerCase()}` : '');
+const byTrackNo = (a, b) => (a.disc || 1) - (b.disc || 1) || (a.no || 9999) - (b.no || 9999);
+const collate = new Intl.Collator('ja', { sensitivity: 'base', numeric: true }).compare;
+function groupAlbums(tracks, q, recent) {
+  const map = new Map();
+  for (const t of tracks) {
+    const key = albumKey(t);
+    if (!key) continue; // 没有专辑名的歌只在「全部歌曲」里
+    let al = map.get(key);
+    if (!al) map.set(key, al = { key, name: t.album, artist: t.albumArtist || (t.comp ? '群星' : primaryArtist(t.artist)), tracks: [], added: 0, year: 0 });
+    al.tracks.push(t);
+    al.added = Math.max(al.added, t.added || 0);
+    al.year = al.year || t.year || 0;
+  }
+  let list = [...map.values()];
+  // 搜索：专辑名、歌手、里面任何一首歌的歌名都算
+  if (q) list = list.filter((al) => `${al.name}\n${al.artist}\n${al.tracks.map((t) => `${t.name}\n${t.artist}`).join('\n')}`.toLowerCase().includes(q));
+  list.sort(recent ? (a, b) => b.added - a.added : (a, b) => collate(a.artist, b.artist) || a.year - b.year || collate(a.name, b.name));
+  for (const al of list) {
+    al.tracks.sort(byTrackNo);
+    al.cover = al.tracks[0].pid;
+    // 没填专辑歌手的：用这张专辑里最短的那个歌手名（不带 feat. 的那个），而不是把「A & B」这种组合名拆开
+    if (!al.tracks[0].albumArtist && !al.tracks[0].comp) al.artist = al.tracks.reduce((a, t) => (t.artist && t.artist.length < a.length ? t.artist : a), al.tracks[0].artist || al.artist);
+  }
+  return list;
+}
+// 封面要一张一张向 Apple Music 要：滚到眼前的才取，同时最多取 3 张，滚走了还没轮到的就先不取
+const covers = { wait: [], busy: 0 };
+const coverIO = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    const img = e.target;
+    img._vis = e.isIntersecting;
+    if (img._vis && !img._queued) { img._queued = true; covers.wait.push(img); }
+  }
+  pumpCovers();
+}, { root: $('#lib-list'), rootMargin: '300px 0px' });
+function pumpCovers() {
+  while (covers.busy < 3 && covers.wait.length) {
+    const img = covers.wait.pop(); // 后来的先取：刚滚到眼前的最要紧
+    if (!img.isConnected) continue;
+    if (!img._vis) { img._queued = false; continue; }
+    covers.busy++;
+    const done = (ok) => { covers.busy--; coverIO.unobserve(img); if (ok) img.classList.add('ok'); else img.remove(); pumpCovers(); };
+    img.onload = () => done(true);
+    img.onerror = () => done(false);
+    img.src = `/api/artwork?pid=${encodeURIComponent(img.dataset.pid)}&thumb=1`;
+  }
+}
+
+const jaTitle = (t) => (t.manual
+  ? `手动标记：${t.ja ? '日文歌手' : '不是日文歌手'}。点一下恢复自动判断`
+  : t.ja ? `「${t.artist}」不是日文歌手？点一下标出来` : `把「${t.artist}」标为日文歌手`);
+function trackRow(t, inAlbum, prev) {
+  const sub = inAlbum ? (t.artist !== lib.album.artist ? t.artist : '') : [t.artist, t.album].filter(Boolean).join(' — ');
+  // 多碟的专辑：每张碟开头加一行小标题（曲序是每张碟各自从 1 数的）
+  const disc = inAlbum && lib.album.discs && (!prev || (prev.disc || 1) !== (t.disc || 1)) ? `<div class="queue-sec">第 ${t.disc || 1} 张</div>` : '';
+  return `${disc}<div class="track lib${inAlbum ? ' num' : ''}${sub ? '' : ' one'}${S.track?.pid === t.pid ? ' cur' : ''}" data-pid="${esc(t.pid)}">`
+    + (inAlbum ? `<div class="no">${t.no || ''}</div>` : '')
+    + `<div class="n">${esc(t.name)}</div>`
+    + (t.artist.trim() ? `<button class="ja-btn${t.ja ? ' on' : ''}${t.manual ? ' manual' : ''}" data-act="ja" title="${esc(jaTitle(t))}" aria-pressed="${!!t.ja}">日</button>` : '')
+    + `<div class="d">${fmt(t.duration)}</div>`
+    + (sub ? `<div class="a">${esc(sub)}</div>` : '')
+    + '</div>';
+}
+const albumRow = (al, i) => `<div class="album" data-album="${i}"><div class="cover"><img data-pid="${esc(al.cover)}" alt=""></div><div class="n">${esc(al.name)}</div><div class="a">${esc(al.artist)} · ${al.tracks.length} 首</div><div class="go">›</div></div>`;
+
+// keep = 保持现在滚到的位置（手动标记之后重画时用）
+function renderLibrary(keep) {
   if (!lib.tracks) return;
+  const box = $('#lib-list');
+  const top = keep === true ? box.scrollTop : 0, want = keep === true ? lib.shown : 0;
   const q = $('#lib-search').value.trim().toLowerCase();
-  const ja = $('#lib-ja').checked;
-  let list = lib.tracks.filter((t) =>
-    (!q || `${t.name}\n${t.artist}\n${t.album}`.toLowerCase().includes(q)) &&
-    (!ja || t.ja));
-  if ($('#lib-recent').checked) list = [...list].sort((a, b) => b.added - a.added);
+  const ja = $('#lib-ja').checked, recent = $('#lib-recent').checked;
+  const hit = (t) => !q || `${t.name}\n${t.artist}\n${t.album}`.toLowerCase().includes(q);
+  let list, empty = '没有匹配的歌曲';
+  if (lib.album) {
+    list = lib.tracks.filter((t) => albumKey(t) === lib.album.key && (!ja || t.ja) && hit(t)).sort(byTrackNo);
+    const al = lib.album;
+    al.discs = new Set(list.map((t) => t.disc || 1)).size > 1;
+    $('#lib-album').innerHTML = `<button class="back" data-act="back" aria-label="返回全部专辑" title="返回全部专辑">‹</button><div class="cover"><img class="ok" src="/api/artwork?pid=${encodeURIComponent(al.cover)}&thumb=1" alt="" onerror="this.remove()"></div><div class="tx"><div class="n">${esc(al.name)}</div><div class="a">${esc([al.artist, al.year || '', `${list.length} 首`].filter(Boolean).join(' · '))}</div></div>`;
+  } else if (lib.view === 'albums') {
+    list = groupAlbums(lib.tracks.filter((t) => !ja || t.ja), q, recent);
+    empty = '没有匹配的专辑';
+  } else {
+    list = lib.tracks.filter((t) => hit(t) && (!ja || t.ja));
+    if (recent) list = [...list].sort((a, b) => b.added - a.added);
+  }
+  $('#lib-album').hidden = !lib.album;
   lib.filtered = list;
   lib.shown = 0;
-  $('#lib-list').innerHTML = list.length ? '' : '<div class="empty">没有匹配的歌曲</div>';
-  moreLibrary();
+  coverIO.disconnect();
+  covers.wait.length = 0;
+  box.innerHTML = list.length ? '' : `<div class="empty">${empty}</div>`;
+  do moreLibrary(); while (lib.shown < want && lib.shown < list.length);
+  box.scrollTop = top;
 }
 function moreLibrary() {
   const part = lib.filtered.slice(lib.shown, lib.shown + 150);
+  const box = $('#lib-list');
+  if (lib.view === 'albums' && !lib.album) {
+    box.insertAdjacentHTML('beforeend', part.map((al, i) => albumRow(al, lib.shown + i)).join(''));
+    for (const img of $$('.cover img:not([src])', box)) if (!img._seen) { img._seen = true; coverIO.observe(img); }
+  } else {
+    box.insertAdjacentHTML('beforeend', part.map((t, i) => trackRow(t, !!lib.album, lib.filtered[lib.shown + i - 1])).join(''));
+  }
   lib.shown += part.length;
-  $('#lib-list').insertAdjacentHTML('beforeend', part.map((t) =>
-    `<div class="track${S.track?.pid === t.pid ? ' cur' : ''}" data-pid="${esc(t.pid)}"><div class="n">${esc(t.name)}</div><div class="d">${fmt(t.duration)}</div><div class="a">${esc([t.artist, t.album].filter(Boolean).join(' — '))}</div></div>`).join(''));
 }
+// 进出专辑时给列表一个方向感：进去从右边滑入，返回从左边滑入
+function navAnim(dir) {
+  for (const el of [$('#lib-list'), $('#lib-album')]) {
+    el.classList.remove('nav-in', 'nav-out');
+    void el.offsetWidth;
+    el.classList.add(el.id === 'lib-list' ? dir : 'nav-in');
+  }
+}
+function openAlbum(al) {
+  const box = $('#lib-list');
+  // 记下专辑列表现在的样子（搜索词、滚到哪），返回时原样回去；进到专辑里搜索框清空，改成搜这张专辑里的歌
+  lib.back = { q: $('#lib-search').value, top: box.scrollTop, shown: lib.shown };
+  lib.album = { key: al.key, name: al.name, artist: al.artist, year: al.year, cover: al.cover };
+  $('#lib-search').value = '';
+  $('#lib-search').placeholder = '在这张专辑里搜索';
+  renderLibrary();
+  navAnim('nav-in');
+}
+function closeAlbum(anim = true) {
+  if (!lib.album) return;
+  const back = lib.back || { q: '', top: 0, shown: 0 };
+  lib.album = null; lib.back = null;
+  $('#lib-search').value = back.q;
+  $('#lib-search').placeholder = '搜索歌曲 / 歌手 / 专辑';
+  renderLibrary();
+  while (lib.shown < back.shown && lib.shown < lib.filtered.length) moreLibrary();
+  $('#lib-list').scrollTop = back.top;
+  if (anim) navAnim('nav-out');
+}
+$('#lib-album').addEventListener('click', (e) => { if (e.target.closest('[data-act="back"]')) closeAlbum(); });
+
+// ---- 手动标记：这位歌手算不算日文歌手 ----
+// ja: true / false = 标为日文 / 不是日文，null = 去掉标记、恢复自动判断
+async function setMark(artist, ja, undo = true) {
+  const name = artist.trim();
+  const prev = lib.marks[name.toLowerCase()];
+  try { lib.marks = await api.post('/api/marks', { artist: name, ja }); } catch (e) { return toast(`保存失败：${e.message}`); }
+  applyJa();
+  renderLibrary(true);
+  renderMarks();
+  if (!undo) return;
+  const n = lib.all ? lib.all.filter((t) => artistKey(t) === name.toLowerCase()).length : 0;
+  const what = ja === null ? `「${name}」已恢复自动判断` : `已把「${name}」标为${ja ? '日文歌手' : '不是日文歌手'}${n > 1 ? `（${n} 首）` : ''}`;
+  toast(what, { label: '撤销', run: () => setMark(name, prev ? prev.ja : null, false).then(() => toast('已撤销')) });
+}
+// 设置里的名单：看得到标过谁，可以逐个去掉或全部清除
+function renderMarks() {
+  const list = Object.values(lib.marks).sort((a, b) => b.at - a.at);
+  $('#set-marks-info').textContent = list.length ? `标过 ${list.length} 位歌手，点 × 恢复自动判断` : '还没有。在资料库里把鼠标移到一首歌上，点右边的「日」。';
+  $('#set-marks-clear').hidden = !list.length;
+  $('#set-marks').innerHTML = list.map((m) => `<span class="mark-chip"><b>${esc(m.name)}</b><i>${m.ja ? '日文' : '不是日文'}</i><button data-artist="${esc(m.name)}" aria-label="恢复自动判断" title="恢复自动判断">×</button></span>`).join('');
+}
+async function replaceMarks(all) {
+  try { lib.marks = await api.post('/api/marks', { all }); } catch (e) { return toast(`保存失败：${e.message}`); }
+  applyJa();
+  renderLibrary(true);
+  renderMarks();
+}
+$('#set-marks').addEventListener('click', (e) => { const b = e.target.closest('button[data-artist]'); if (b) setMark(b.dataset.artist, null); });
+$('#set-marks-clear').addEventListener('click', async () => {
+  const prev = lib.marks;
+  await replaceMarks({});
+  toast('已清除全部手动标记', { label: '撤销', run: () => replaceMarks(prev).then(() => toast('已撤销')) });
+});
+
 $('#lib-list').addEventListener('scroll', (e) => { const el = e.target; if (el.scrollTop + el.clientHeight > el.scrollHeight - 400 && lib.shown < lib.filtered.length) moreLibrary(); });
 $('#lib-list').addEventListener('click', (e) => {
+  const al = e.target.closest('.album');
+  if (al) return openAlbum(lib.filtered[+al.dataset.album]);
   const row = e.target.closest('.track');
   if (!row) return;
+  if (e.target.closest('.ja-btn')) {
+    const t = lib.filtered.find((x) => x.pid === row.dataset.pid);
+    if (t) setMark(t.artist, t.manual ? null : !t.ja);
+    return;
+  }
   // 现在筛选出来的这份列表就是播放列表：从点的这首开始，播完自动接下一首
   const sel = $('#lib-playlist');
   const q = $('#lib-search').value.trim();
-  const label = [sel.selectedOptions[0]?.textContent || '全部歌曲', $('#lib-ja').checked && '仅日文', $('#lib-recent').checked && '最近添加', q && `搜索「${q}」`].filter(Boolean).join(' · ');
+  const label = [lib.album ? `专辑「${lib.album.name}」` : sel.selectedOptions[0]?.textContent || '全部歌曲', $('#lib-ja').checked && '仅日文', !lib.album && $('#lib-recent').checked && '最近添加', q && `搜索「${q}」`].filter(Boolean).join(' · ');
   api.post('/api/queue/play', { items: lib.filtered.map((t) => [t.pid, t.name, t.artist, t.duration]), start: row.dataset.pid, label })
     .then(onQueue, (err) => toast(`Apple Music 没有响应：${err.message}`));
   $$('#lib-list .cur').forEach((el) => el.classList.remove('cur'));
   row.classList.add('cur');
 });
-$('#lib-search').addEventListener('input', renderLibrary);
+$('#lib-search').addEventListener('input', () => renderLibrary());
 // 默认只看日文歌；取消勾选后会记住
 $('#lib-ja').checked = prefs.libJa !== false;
 $('#lib-ja').addEventListener('change', (e) => { prefs.libJa = e.target.checked; savePrefs(); renderLibrary(); });
-$('#lib-recent').addEventListener('change', renderLibrary);
+$('#lib-recent').addEventListener('change', () => renderLibrary());
 $('#lib-playlist').addEventListener('change', async (e) => {
+  const v = e.target.value;
+  closeAlbum(false);
+  lib.view = v === '@albums' ? 'albums' : 'tracks';
   $('#lib-list').innerHTML = '<div class="empty">读取中…</div>';
   try {
-    const tracks = markJapanese(await api.get(`/api/library?playlist=${encodeURIComponent(e.target.value)}`));
-    // 歌单里的歌是不是日文歌，以整个资料库的判断为准：只看歌单自己那几首的话线索不够
-    // （比如整张专辑的歌名都是英文译名，要靠同一位歌手的其他歌才认得出来）
-    if (e.target.value) for (const t of tracks) { const known = lib.jaByPid?.get(t.pid); if (known !== undefined) t.ja = known; }
-    else lib.jaByPid = new Map(tracks.map((t) => [t.pid, t.ja]));
+    const playlist = v && v !== '@albums' ? v : '';
+    const tracks = await api.get(`/api/library?playlist=${encodeURIComponent(playlist)}`);
+    if (!playlist) lib.all = tracks;
     lib.tracks = tracks;
+    applyJa();
     renderLibrary();
   }
   catch (err) { $('#lib-list').innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
@@ -1341,6 +1527,8 @@ async function openSettings() {
   renderKeys();
   disarmCache();
   refreshCacheInfo();
+  renderMarks();
+  api.get('/api/marks').then((m) => { lib.marks = m; renderMarks(); }).catch(() => {});
   api.get('/api/info').then((i) => { $('#about-version').textContent = `版本 ${i.version || '未知'}　程序位置 ${i.root}`; }).catch(() => {});
   try {
     const s = await api.get('/api/settings');
@@ -1493,7 +1681,7 @@ document.addEventListener('mousedown', (e) => {
   if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset') && !(S.tapAlign && e.target.closest('#lyrics, #focus'))) $('#offset-pop').hidden = true;
   if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) toggleMenu(false);
   if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) $('#reading-pop').hidden = true;
-  for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar`)) $(`#${id}`).hidden = true;
+  for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) $(`#${id}`).hidden = true;
 });
 
 $('#btn-play').addEventListener('click', () => control('playpause'));
@@ -1608,11 +1796,20 @@ document.addEventListener('keydown', (e) => {
 addEventListener('resize', () => scrollToActive(true));
 
 let toastTimer = 0;
-function toast(msg) {
+// action = { label, run }：提示后面带一个按钮（比如「撤销」），这时提示多留几秒
+function toast(msg, action) {
   const el = $('#toast');
-  el.textContent = msg; el.hidden = false;
+  el.textContent = msg;
+  if (action) {
+    const b = document.createElement('button');
+    b.className = 'toast-act';
+    b.textContent = action.label;
+    b.addEventListener('click', () => { el.hidden = true; action.run(); });
+    el.append(b);
+  }
+  el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+  toastTimer = setTimeout(() => { el.hidden = true; }, action ? 7000 : 2600);
 }
 
 // ---------------- 启动 ----------------
