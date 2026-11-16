@@ -194,6 +194,9 @@ function renderLines() {
   $('#scroll').innerHTML = S.lines.map((line, li) =>
     `<div class="line${line.gap ? ' gap' : ''}${line.ct ? ' timed' : ''}" data-i="${li}">${lineBody(line, li)}<div class="ann"></div></div>`).join('');
   S.active = -2;
+  // 每一行是「第几句看得见的歌词」。间奏行平时是收起来的（不占位置），算远近时不能把它算成一行
+  let n = 0;
+  S.vis = S.lines.map((line) => (line.gap ? n : ++n));
   paintSelection();
 }
 
@@ -249,10 +252,12 @@ function setActive(i) {
   hideSensePop();
   const apply = () => {
     const els = elScroll.children, a = Math.max(i, 0);
+    const vis = S.vis, va = vis[a] || 0, inGap = !!S.lines[a]?.gap; // 正在间奏：三个点自己算一行
     for (let k = 0; k < els.length; k++) {
       const el = els[k];
       // 只改状态真的变了的行：离当前行 6 行以外的样子都一样
-      const st = k === i ? 2 : k < i ? 1 : 0, d = Math.min(Math.abs(k - a), 6);
+      const st = k === i ? 2 : k < i ? 1 : 0;
+      const d = k === a ? 0 : Math.min(Math.abs(vis[k] - va) + (inGap && k < a ? 1 : 0), 6);
       if (el._st !== st) { el._st = st; el.classList.toggle('active', st === 2); el.classList.toggle('past', st === 1); }
       if (el._d !== d) { el._d = d; el.style.setProperty('--d', d); }
     }

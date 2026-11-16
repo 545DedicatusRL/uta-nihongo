@@ -130,7 +130,9 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 @keyframes ann-in { from { opacity: 0; transform: translateY(6px); } }
 .line.past { color: var(--fg-3); }
 #scroll.free .line, .dict-mode .line, .edit-mode .line { filter: none; opacity: 1; }
-.line.gap { cursor: default; padding-top: 6px; padding-bottom: 6px; }
+/* 间奏行平时收起、不占位置；到了间奏才展开，上下的歌词被它推开（位移由 glide 的弹簧动画补上），间奏结束再合拢 */
+.line.gap { cursor: default; height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; }
+.line.gap.active { height: auto; padding-top: 10px; padding-bottom: 10px; overflow: visible; }
 .line.gap:hover { background: none; }
 /* 间奏的三个点：外层管出现时的淡入，里层（.dots-g）的大小和透明度由 app.js 的 paintDots 按进度驱动 */
 .dots { display: inline-flex; align-items: center; height: 34px; margin-left: 5px; opacity: 0; transition: opacity .45s; }
