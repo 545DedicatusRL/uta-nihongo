@@ -163,7 +163,7 @@ function setArt(track, cover) {
 
 // ---------------- 渲染歌词 ----------------
 function jpHTML(line, li) {
-  if (line.gap) return '<span class="dots"><i></i><i></i><i></i></span>';
+  if (line.gap) return '<span class="dots"><span class="dots-g"><i></i><i></i><i></i></span></span>';
   let html = '';
   line.tokens.forEach((tok, ti) => {
     let ci = tok.i0, inner = '';
@@ -173,7 +173,11 @@ function jpHTML(line, li) {
       for (const ch of seg.t) { chars += `<span class="ch" data-c="${ci}">${esc(ch)}</span>`; ci += ch.length; }
       const isK = KANJI.test(seg.t);
       let timing = '';
-      if (line.ct && line.ct[c0]) timing = ` data-t0="${line.ct[c0][0]}" data-t1="${(line.ct[ci - 1] || line.ct[c0])[1]}"`;
+      if (line.ct && line.ct[c0]) {
+        const t0 = line.ct[c0][0], t1 = (line.ct[ci - 1] || line.ct[c0])[1];
+        // --lt：唱到这个词时「抬起来」用多久，跟着这个词的时长走（长音慢慢抬，短音快一点）
+        timing = ` data-t0="${t0}" data-t1="${t1}" style="--lt:${clamp(t1 - t0, 0.28, 0.9).toFixed(2)}s"`;
+      }
       const cls = `seg${isK ? ' k' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
       inner += `<span class="${cls}" data-si="${si}"${timing}>${isK && seg.r ? `<ruby>${chars}<rt>${esc(seg.r)}</rt></ruby>` : chars}</span>`;
     });
@@ -205,7 +209,7 @@ function renderFocus() {
   $('#f-next').dataset.i = next ? S.lines.indexOf(next) : '';
   const cur = $('#f-cur');
   cur.className = `f-cur${line?.ct ? ' timed' : ''}`;
-  cur.innerHTML = line ? lineBody(line, i) : (S.lines.length ? '<div class="jp"><span class="dots"><i></i><i></i><i></i></span></div>' : '');
+  cur.innerHTML = line ? lineBody(line, i) : (S.lines.length ? '<div class="jp"><span class="dots idle"><span class="dots-g"><i></i><i></i><i></i></span></span></div>' : '');
   cur.style.animation = 'none'; void cur.offsetWidth; cur.style.animation = '';
   paintAnnotations();
   paintSelection();
@@ -218,55 +222,163 @@ function findActive(t) {
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (L[mid].t <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
   return ans;
 }
+// 弹簧缓动：按弹簧的物理模型算出一条曲线，交给浏览器的 linear() 缓动去跑，
+// 这样动画全程在合成器线程上，不需要每帧用 JS 去算位置。
+function springEasing(stiffness, damping, mass = 1) {
+  if (!globalThis.CSS?.supports?.('animation-timing-function', 'linear(0, 1)')) return { easing: 'cubic-bezier(.2, .9, .25, 1)', ms: 650 };
+  const dt = 1 / 480, step = 1 / 40, pts = [0];
+  let x = 0, v = 0, t = 0, next = step;
+  while (t < 2) {
+    v += ((1 - x) * stiffness - v * damping) / mass * dt;
+    x += v * dt;
+    t += dt;
+    if (t >= next) { pts.push(Math.round(x * 1000) / 1000); next += step; if (Math.abs(1 - x) < 0.0015 && Math.abs(v) < 0.02) break; }
+  }
+  pts[pts.length - 1] = 1;
+  return { easing: `linear(${pts.join(', ')})`, ms: Math.round((pts.length - 1) * step * 1000) };
+}
+const SPRING = springEasing(100, 15); // 阻尼比 0.75：到位前只有一点点回弹
+document.documentElement.style.setProperty('--spring', SPRING.easing);
+document.documentElement.style.setProperty('--spring-ms', `${SPRING.ms}ms`);
+const noMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const elScroll = $('#scroll');
+
 function setActive(i) {
+  const first = S.active === -2; // 刚渲染完：直接就位，不做动画
   S.active = i;
   hideSensePop();
-  const els = $('#scroll').children;
-  for (let k = 0; k < els.length; k++) {
-    const el = els[k];
-    el.classList.toggle('active', k === i);
-    el.classList.toggle('past', k < i);
-    el.style.setProperty('--d', Math.abs(k - Math.max(i, 0)));
-  }
-  renderFocus();
-  scrollToActive();
+  const apply = () => {
+    const els = elScroll.children, a = Math.max(i, 0);
+    for (let k = 0; k < els.length; k++) {
+      const el = els[k];
+      // 只改状态真的变了的行：离当前行 6 行以外的样子都一样
+      const st = k === i ? 2 : k < i ? 1 : 0, d = Math.min(Math.abs(k - a), 6);
+      if (el._st !== st) { el._st = st; el.classList.toggle('active', st === 2); el.classList.toggle('past', st === 1); }
+      if (el._d !== d) { el._d = d; el.style.setProperty('--d', d); }
+    }
+    renderFocus();
+    jumpToActive();
+  };
+  if (first) apply(); else glide(apply, i);
   collectFill();
 }
 function collectFill() {
   const line = S.lines[S.active];
   S.fill = null;
   if (!line) return;
-  const root = prefs.view === 'focus' ? $('#f-cur') : $('#scroll').children[S.active];
+  const root = prefs.view === 'focus' ? $('#f-cur') : elScroll.children[S.active];
   if (!root) return;
-  if (line.gap) S.fill = { gap: true, line, dots: $$('.dots i', root) };
-  else if (line.ct) S.fill = { segs: $$('.seg', root).filter((el) => el.dataset.t0).map((el) => ({ el, t0: +el.dataset.t0, t1: +el.dataset.t1 })) };
+  if (line.gap) S.fill = { gap: true, line, g: $('.dots-g', root), dots: $$('.dots-g i', root).map((el) => ({ el, p: -1 })), s: '', o: '' };
+  else if (line.ct) {
+    S.fill = { segs: $$('.seg', root).filter((el) => el.dataset.t0).map((el) => {
+      el.classList.remove('on');
+      return { el, t0: +el.dataset.t0, t1: +el.dataset.t1, d: Math.max(0.05, el.dataset.t1 - el.dataset.t0), p: -1, on: false };
+    }) };
+  }
 }
+
+// ---------------- 滚动：让当前行停在偏上的位置 ----------------
+// 滚动位置本身是直接跳过去的；「跳之前」和「跳之后」各量一次看得见的那些行在哪，
+// 再让每一行从原来的位置用弹簧动画滑到新位置（FLIP）。下面的行依次晚一点出发，
+// 就有了一行带着一行走的感觉。当前行底下的标注出现 / 消失造成的挤动也一起被这个动画吸收。
 let freeTimer = 0;
+let glideAnims = [];
+function jumpToActive() {
+  if (prefs.view !== 'apple' || elScroll.classList.contains('free')) return;
+  const el = elScroll.children[Math.max(S.active, 0)];
+  if (el) elScroll.scrollTop = el.offsetTop - elScroll.clientHeight * 0.3;
+}
+// 视口上下各多看 pad 像素，返回这一段里的行的下标范围
+function visibleRange(pad) {
+  const els = elScroll.children, n = els.length;
+  if (!n) return [0, -1];
+  const top = elScroll.scrollTop - pad, bot = elScroll.scrollTop + elScroll.clientHeight + pad;
+  let a = 0, b = n - 1;
+  while (a < b) { const m = (a + b) >> 1; if (els[m].offsetTop + els[m].offsetHeight < top) a = m + 1; else b = m; }
+  const lo = a;
+  b = n - 1;
+  while (a < b) { const m = (a + b + 1) >> 1; if (els[m].offsetTop > bot) b = m - 1; else a = m; }
+  return [lo, a];
+}
+function glide(change, pivot = S.active) {
+  if (prefs.view !== 'apple' || noMotion.matches || document.hidden || !elScroll.children.length) return change();
+  const els = elScroll.children, H = elScroll.clientHeight;
+  // 之前：量位置（包含还没播完的上一次动画的位移，所以连续换行时能从半路接着走）
+  const [lo1, hi1] = visibleRange(H * 0.6);
+  const before = new Map();
+  for (let k = lo1; k <= hi1; k++) before.set(k, els[k].getBoundingClientRect().top);
+  const scroll0 = elScroll.scrollTop;
+  for (const an of glideAnims) an.cancel();
+  glideAnims = [];
+  change();
+  // 之后
+  const [lo2, hi2] = visibleRange(H * 0.2);
+  const far = clamp(elScroll.scrollTop - scroll0, -H * 0.5, H * 0.5); // 之前不在视野里的行（比如拖了进度）：从不远处滑进来
+  const a = Math.max(pivot, 0);
+  const up = elScroll.scrollTop >= scroll0;
+  for (let k = Math.min(lo1, lo2); k <= Math.max(hi1, hi2); k++) {
+    if (k > hi2 + 2 || k < lo2 - 2) continue; // 换完以后看不见的行不用动
+    const el = els[k];
+    const d = before.has(k) ? before.get(k) - el.getBoundingClientRect().top : far;
+    if (Math.abs(d) < 0.5) continue;
+    // 往上走时，当前行以上的一起先走，下面的行一行比一行晚；往回走时反过来
+    const lag = Math.min(Math.max(0, up ? k - a : a - k), 9) * 38;
+    glideAnims.push(el.animate([{ translate: `0 ${d.toFixed(1)}px` }, { translate: '0 0' }], { duration: SPRING.ms, delay: lag, easing: SPRING.easing, fill: 'backwards' }));
+  }
+}
 function scrollToActive(instant) {
-  if (prefs.view !== 'apple') return;
-  const sc = $('#scroll');
-  if (sc.classList.contains('free')) return;
-  const el = sc.children[Math.max(S.active, 0)];
-  if (!el) return;
-  sc.scrollTo({ top: el.offsetTop - sc.clientHeight * 0.3, behavior: instant ? 'instant' : 'smooth' });
+  if (prefs.view !== 'apple' || elScroll.classList.contains('free')) return;
+  if (instant) { for (const an of glideAnims) an.cancel(); glideAnims = []; jumpToActive(); } else glide(jumpToActive);
 }
 for (const ev of ['wheel', 'touchmove']) {
-  $('#scroll').addEventListener(ev, () => {
-    const sc = $('#scroll');
-    sc.classList.add('free');
+  elScroll.addEventListener(ev, () => {
+    elScroll.classList.add('free');
     clearTimeout(freeTimer);
-    freeTimer = setTimeout(() => { sc.classList.remove('free'); scrollToActive(); }, S.mode ? 8000 : 3500);
+    freeTimer = setTimeout(() => { elScroll.classList.remove('free'); scrollToActive(); }, S.mode ? 8000 : 3500);
   }, { passive: true });
 }
 
-function frame() {
-  requestAnimationFrame(frame);
+// ---------------- 每一帧：进度条、逐字填充、间奏的三个点 ----------------
+// 这里每秒跑 60 次，所以只在数值真的变了的时候才去改页面，并且尽量只改不会引起重新排版的属性
+const elFill = $('#progress-fill'), elCur = $('#t-cur'), elRem = $('#t-rem');
+const shown = { w: -1, cur: '', rem: '' };
+function setProgress(frac) {
+  const w = Math.round(clamp(frac) * 2000) / 2000;
+  if (w !== shown.w) { shown.w = w; elFill.style.transform = `translateX(${(w - 1) * 100}%)`; }
+}
+// 间奏的三个点。e：间奏已经过了多久；D：间奏总长
+//   1. 三个点依次读满；整体一直在「呼吸」，越接近读满呼吸的幅度越大、个头也越大
+//   2. 读满的那一刻正好在呼吸的最高点，接着再胀大一点，然后缩小并淡出，在下一句开始前消失
+function paintDots(f, t) {
+  const D = f.line.end - f.line.t, e = t - f.line.t;
+  const out = Math.min(1.1, D * 0.22);          // 收尾（胀大 → 淡出）用的时间
+  const full = Math.max(0.3, D - out - 0.12);   // 读满的时刻
+  const span = full / 3;
+  for (let k = 0; k < f.dots.length; k++) {
+    const dot = f.dots[k], p = Math.round(clamp((e - k * span) / span) * 100) / 100;
+    if (p !== dot.p) { dot.p = p; dot.el.style.setProperty('--p', p); }
+  }
+  let sc, op = 1;
+  if (e <= full) {
+    const P = clamp(e / full);
+    sc = (0.88 + 0.12 * P) * (1 + (0.035 + 0.055 * P) * Math.cos((e - full) * 2 * Math.PI / 2.4));
+  } else {
+    const q = clamp((e - full) / out), peak = 1.09;
+    if (q < 0.4) sc = peak + (1.22 - peak) * (1 - (1 - q / 0.4) ** 2);
+    else { const u = (q - 0.4) / 0.6; sc = 1.22 - 0.5 * u * u; op = 1 - u * u * (3 - 2 * u); }
+  }
+  const s = sc.toFixed(3), o = op.toFixed(2);
+  if (s !== f.s) { f.s = s; f.g.style.transform = `scale(${s})`; }
+  if (o !== f.o) { f.o = o; f.g.style.opacity = o; }
+}
+function tick() {
   const pos = now();
   const dur = S.track?.duration || 0;
   if (!S.dragging) {
-    $('#progress-fill').style.width = dur ? `${clamp(pos / dur) * 100}%` : '0';
-    $('#t-cur').textContent = fmt(pos);
-    $('#t-rem').textContent = `-${fmt(Math.max(0, dur - pos))}`;
+    setProgress(dur ? pos / dur : 0);
+    const cur = fmt(pos), rem = `-${fmt(Math.max(0, dur - pos))}`;
+    if (cur !== shown.cur) elCur.textContent = shown.cur = cur;
+    if (rem !== shown.rem) elRem.textContent = shown.rem = rem;
   }
   if (!S.lines.length) return;
   const t = pos - S.offset;
@@ -274,12 +386,19 @@ function frame() {
   if (i !== S.active) setActive(i);
   const f = S.fill;
   if (!f) return;
-  if (f.gap) {
-    const span = (f.line.end - f.line.t) / 3;
-    f.dots.forEach((d, k) => d.style.setProperty('--p', clamp((t - f.line.t - k * span) / span)));
-  } else {
-    for (const s of f.segs) s.el.style.setProperty('--p', clamp((t - s.t0) / Math.max(0.05, s.t1 - s.t0)));
+  if (f.gap) return paintDots(f, t);
+  for (const s of f.segs) {
+    // 填充进度：唱过的和还没唱到的词不会变，实际每帧只会改到正在唱的那一两个
+    const p = t <= s.t0 ? 0 : t >= s.t1 ? 1 : Math.round((t - s.t0) / s.d * 200) / 200;
+    if (p !== s.p) { s.p = p; s.el.style.setProperty('--p', p); }
+    // 唱到了就抬起来：只切一次 class，抬起的过程交给 CSS 过渡
+    const on = t >= s.t0;
+    if (on !== s.on) { s.on = on; s.el.classList.toggle('on', on); }
   }
+}
+function frame() {
+  requestAnimationFrame(frame);
+  tick();
 }
 
 // 词典释义按设置的语言取：中文（有道）/ 英文（Jisho）/ 两者
@@ -1188,7 +1307,7 @@ const seek = $('#seek');
 seek.addEventListener('input', () => {
   S.dragging = true;
   const dur = S.track?.duration || 0;
-  $('#progress-fill').style.width = `${seek.value / 10}%`;
+  setProgress(seek.value / 1000);
   $('#t-cur').textContent = fmt((seek.value / 1000) * dur);
 });
 seek.addEventListener('change', () => { S.dragging = false; if (S.track) seekTo((seek.value / 1000) * S.track.duration); });
@@ -1255,4 +1374,4 @@ es.onopen = () => api.get('/api/info').then((i) => {
 }).catch(() => {});
 requestAnimationFrame(frame);
 // 调试入口：地址加 ?debug 后可在控制台用 __uta.onState(...) 模拟播放状态
-if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs }; }
+if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs, tick }; }
