@@ -861,7 +861,7 @@ let editing = null;
 // 修改模式下，鼠标停在多义词的标注上：其他义项以同款小卡叠在它下面，
 // 点其中一张就换上它（这首歌里固定用它），原来那张弹出后排到最下面。
 const sensePop = $('#sense-pop');
-const sense = { ann: null, box: null, li: null, order: [], timer: 0, busy: false };
+const sense = { ann: null, box: null, li: null, order: [], timer: 0, busy: false, mute: null };
 // 一张标注属于哪一行：滚动样式里看它在哪一行（修改模式下前后几句也有标注），大字样式里就是当前句
 const annsAt = (li) => (li === null ? S.anns : S.annsByLine?.get(li)) || [];
 function hideSensePop() { clearTimeout(sense.timer); sensePop.hidden = true; sense.ann = null; }
@@ -894,6 +894,11 @@ function openSensePop(chip) {
 document.addEventListener('mouseover', (e) => {
   if (sense.busy) return;
   const chip = S.mode === 'edit' ? e.target.closest?.('.chip.multi') : null;
+  // 刚点回来的那张标注：鼠标还停在上面，不马上弹出义项；移开以后再放上来才弹
+  if (sense.mute) {
+    if (chip && chip.dataset.key === sense.mute.key && chip.closest('.ann, #f-ann') === sense.mute.box) return;
+    sense.mute = null;
+  }
   if (chip || e.target.closest?.('#sense-pop')) {
     clearTimeout(sense.timer);
     if (chip && (sensePop.hidden || sense.ann?.key !== chip.dataset.key || sense.box !== chip.closest('.ann, #f-ann'))) openSensePop(chip);
@@ -1004,6 +1009,7 @@ async function toggleAnnotation(chip) {
   try { await api.post('/api/song/annotation', { key: S.song.key, ann: key, hidden: hide }); }
   catch (e) { return toast(`保存失败：${e.message}`); }
   if (hide) S.hiddenAnn.add(key); else S.hiddenAnn.delete(key);
+  sense.mute = hide ? null : { key, box: chip.closest('.ann, #f-ann') };
   paintAnnotations();
   const name = chip.querySelector('b')?.textContent || '';
   toast(hide ? `这首歌里不再显示「${name}」（修改模式下可点回来）` : `已恢复「${name}」`);
