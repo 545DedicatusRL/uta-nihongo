@@ -352,10 +352,11 @@ function setProgress(frac) {
   if (w !== shown.w) { shown.w = w; elFill.style.transform = `translateX(${(w - 1) * 100}%)`; }
 }
 // 间奏的三个点。e：间奏已经过了多久；D：间奏总长
-//   1. 三个点依次读满；整体一直在「呼吸」，越接近读满呼吸的幅度越大、个头也越大
+//   1. 三个点依次读满；整体一直在慢慢「呼吸」，越接近读满呼吸的幅度越大、个头也越大
 //   2. 呼吸不是匀速的正弦：胀到最大、缩到最小时都会停一小会儿，中间缓进缓出
-//   3. 呼吸一开始慢，之后加快，但加快的势头很快就平下来（频率按 1 - e^(-t/τ) 趋近一个稳定值）
+//   3. 呼吸的快慢基本不变，只是开头比后面稍微慢一点点（频率按 1 - e^(-t/τ) 趋近一个稳定值）
 //   4. 读满的那一刻正好停在最大处，接着再胀大一点，然后缩小并淡出，在下一句开始前消失
+const DOT_BASE = [0.9, 1], DOT_AMP = [0.08, 0.15]; // 个头、呼吸幅度：从间奏开始到读满的变化范围
 const BREATH_HOLD = 0.13; // 一次呼吸里，在最大 / 最小处各停留的比例
 // x：一次呼吸里走到哪了（0–1，0 是「最大」那段停顿的正中）。返回 -1（最小）到 1（最大）
 function breath(x) {
@@ -371,7 +372,7 @@ function dotsPlan(line) {
   const out = Math.min(1.1, D * 0.22);          // 收尾（胀大 → 淡出）用的时间
   const full = Math.max(0.3, D - out - 0.12);   // 读满的时刻
   const tau = clamp(full * 0.3, 1.5, 4);        // 呼吸加快的势头多久平下来
-  let f0 = 1 / 4.4, f1 = 1 / 1.9;               // 呼吸的频率：从约 4.4 秒一次加快到约 1.9 秒一次
+  let f0 = 1 / 4.2, f1 = 1 / 3.7;               // 呼吸的频率：约 4 秒一次，开头稍慢
   const count = (e) => f1 * e - (f1 - f0) * tau * (1 - Math.exp(-e / tau));
   // 微调快慢，让整段正好是「N 次半」：从最小处开始，读满时落在最大处
   const k = (Math.max(1, Math.round(count(full) - 0.5)) + 0.5) / count(full);
@@ -388,11 +389,11 @@ function paintDots(f, t) {
   if (e <= g.full) {
     const P = e / g.full;
     const cyc = g.count(e) - g.total; // 距离「读满」还差多少次呼吸（负数），0 = 正在最大处
-    sc = (0.88 + 0.12 * P) * (1 + (0.035 + 0.055 * P) * breath(cyc - Math.floor(cyc)));
+    sc = (DOT_BASE[0] + (DOT_BASE[1] - DOT_BASE[0]) * P) * (1 + (DOT_AMP[0] + (DOT_AMP[1] - DOT_AMP[0]) * P) * breath(cyc - Math.floor(cyc)));
   } else {
-    const q = clamp((e - g.full) / g.out), peak = 1.09;
-    if (q < 0.4) sc = peak + (1.22 - peak) * (1 - (1 - q / 0.4) ** 2);
-    else { const u = (q - 0.4) / 0.6; sc = 1.22 - 0.5 * u * u; op = 1 - u * u * (3 - 2 * u); }
+    const q = clamp((e - g.full) / g.out), peak = DOT_BASE[1] * (1 + DOT_AMP[1]), top = peak + 0.12;
+    if (q < 0.4) sc = peak + (top - peak) * (1 - (1 - q / 0.4) ** 2);
+    else { const u = (q - 0.4) / 0.6; sc = top - 0.5 * u * u; op = 1 - u * u * (3 - 2 * u); }
   }
   const s = sc.toFixed(3), o = op.toFixed(2);
   if (s !== f.s) { f.s = s; f.g.style.transform = `scale(${s})`; }
