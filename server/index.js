@@ -6,12 +6,13 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
   ROOT, getSettings, saveSettings, getSongMeta, saveSongMeta,
-  getUserDict, saveUserDict, getVocab, saveVocab,
+  getUserDict, saveUserDict, getVocab, saveVocab, readJSON, writeJSON,
 } from './store.js';
 import * as music from './music.js';
 import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
 import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
+import { createQueue } from './queue.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
@@ -39,7 +40,7 @@ function send(res, status, body, type = 'application/json; charset=utf-8') {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let buf = '';
-    req.on('data', (c) => { buf += c; if (buf.length > 2e6) req.destroy(); });
+    req.on('data', (c) => { buf += c; if (buf.length > 8e6) req.destroy(); });
     req.on('end', () => { try { resolve(buf ? JSON.parse(buf) : {}); } catch (e) { reject(e); } });
     req.on('error', reject);
   });
@@ -101,17 +102,29 @@ async function loadSong(track, { refresh = false } = {}) {
 }
 
 // ---------------- API 路由 ----------------
+// UTA_NO_MUSIC=1（调试界面用）：不碰真正的 Apple Music，也不读写磁盘上的队列
+const NO_MUSIC = !!process.env.UTA_NO_MUSIC;
+const control = (...args) => (NO_MUSIC ? Promise.resolve('ok') : music.control(...args));
+// 内置播放队列：一首播完后由它接着播下一首（见 queue.js）
+const queue = createQueue({
+  player: music.player,
+  play: (pid) => control('playTrack', pid),
+  seek: (sec) => control('seek', sec),
+  load: () => (NO_MUSIC ? null : readJSON('queue.json', null)),
+  save: (q) => { if (!NO_MUSIC) writeJSON('queue.json', q); },
+});
+
 const sseClients = new Set();
 music.player.on('state', (s) => {
   if (!sseClients.size) return;
-  const msg = `data: ${JSON.stringify({ ...s, lag: Date.now() - s.ts })}\n\n`;
+  const msg = `data: ${JSON.stringify({ ...s, lag: Date.now() - s.ts, queue: queue.summary() })}\n\n`;
   for (const res of sseClients) res.write(msg);
 });
 
 const routes = {
   'GET /api/events': (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-    res.write(`data: ${JSON.stringify(music.player.state)}\n\n`);
+    res.write(`data: ${JSON.stringify({ ...music.player.state, queue: queue.summary() })}\n\n`);
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
   },
@@ -126,9 +139,24 @@ const routes = {
   },
   'POST /api/control': async (req, res) => {
     const { cmd, a, b } = await readBody(req);
-    await music.control(cmd, a ?? '', b ?? '');
+    // 有播放队列时，上一首 / 下一首走队列；否则交给 Apple Music 自己
+    if (cmd === 'next' && queue.active()) await queue.next();
+    else if (cmd === 'prev' && queue.active()) await queue.prev(music.player.state.pos || 0);
+    else await control(cmd, a ?? '', b ?? '');
     send(res, 200, { ok: true });
   },
+  // 播放队列
+  'GET /api/queue': (req, res, q) => send(res, 200, queue.view(Math.min(Number(q.get('n')) || 150, 5000))),
+  'POST /api/queue/play': async (req, res) => {
+    const ok = await queue.playList(await readBody(req));
+    send(res, ok ? 200 : 400, ok ? queue.summary() : { error: '这份列表里没有能播放的歌' });
+  },
+  'POST /api/queue/jump': async (req, res) => {
+    const ok = await queue.jump((await readBody(req)).pid);
+    send(res, ok ? 200 : 400, ok ? queue.summary() : { error: '这首歌不在播放列表里' });
+  },
+  'POST /api/queue/shuffle': async (req, res) => { queue.setShuffle(!!(await readBody(req)).on); send(res, 200, queue.summary()); },
+  'POST /api/queue/repeat': async (req, res) => { queue.setRepeat(!!(await readBody(req)).on); send(res, 200, queue.summary()); },
 
   'GET /api/song': async (req, res, q) => {
     const track = { pid: q.get('pid') || '', name: q.get('name') || '', artist: q.get('artist') || '', album: q.get('album') || '', duration: Number(q.get('duration')) || 0 };

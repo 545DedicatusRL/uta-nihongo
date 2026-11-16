@@ -44,6 +44,7 @@ function setClock(pos, playing = clock.playing) { clock.pos = pos; clock.at = pe
 
 function onState(s) {
   if (s.bye) return showBye();
+  if ('queue' in s) onQueue(s.queue);
   S.player = s;
   const playing = s.state === 'playing';
   app.classList.toggle('playing', playing);
@@ -861,7 +862,12 @@ $('#lib-list').addEventListener('scroll', (e) => { const el = e.target; if (el.s
 $('#lib-list').addEventListener('click', (e) => {
   const row = e.target.closest('.track');
   if (!row) return;
-  control('playTrack', row.dataset.pid, $('#lib-playlist').value);
+  // 现在筛选出来的这份列表就是播放列表：从点的这首开始，播完自动接下一首
+  const sel = $('#lib-playlist');
+  const q = $('#lib-search').value.trim();
+  const label = [sel.selectedOptions[0]?.textContent || '全部歌曲', $('#lib-ja').checked && '仅日文', $('#lib-recent').checked && '最近添加', q && `搜索「${q}」`].filter(Boolean).join(' · ');
+  api.post('/api/queue/play', { items: lib.filtered.map((t) => [t.pid, t.name, t.artist, t.duration]), start: row.dataset.pid, label })
+    .then(onQueue, (err) => toast(`Apple Music 没有响应：${err.message}`));
   $$('#lib-list .cur').forEach((el) => el.classList.remove('cur'));
   row.classList.add('cur');
 });
@@ -875,6 +881,52 @@ $('#lib-playlist').addEventListener('change', async (e) => {
   try { lib.tracks = markJapanese(await api.get(`/api/library?playlist=${encodeURIComponent(e.target.value)}`)); renderLibrary(); }
   catch (err) { $('#lib-list').innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
 });
+
+// ---------------- 播放列表（内置队列，逻辑在服务端的 queue.js） ----------------
+const queue = { sum: null, n: 150, list: [] };
+const queueKey = (x) => (x ? [x.active, x.pid, x.at, x.total, x.shuffle, x.repeat, x.label].join('|') : '');
+// 服务端每次推送状态都带着队列的概况；有变化时才更新界面
+function onQueue(sum) {
+  const changed = queueKey(queue.sum) !== queueKey(sum);
+  queue.sum = sum;
+  if (!changed) return;
+  $('#btn-shuffle').classList.toggle('on', !!sum.shuffle);
+  $('#btn-shuffle').setAttribute('aria-pressed', !!sum.shuffle);
+  $('#btn-queue').classList.toggle('on', !!sum.active);
+  $('#btn-next').title = sum.active && sum.next ? `下一首：${sum.next.name}` : '';
+  if (!$('#queue').hidden) loadQueue();
+}
+async function loadQueue() {
+  let v;
+  try { v = await api.get(`/api/queue?n=${queue.n}`); } catch { return; }
+  queue.list = v.list;
+  $('#queue-count').textContent = v.total ? `· ${Math.max(v.at, 0) + 1} / ${v.total}` : '';
+  $('#queue-label').textContent = v.label ? `来自：${v.label}` : '';
+  $('#queue-shuffle').checked = !!v.shuffle;
+  $('#queue-repeat').checked = !!v.repeat;
+  const row = (t, cur) => `<div class="track${cur ? ' cur' : ''}" data-pid="${esc(t.pid)}"><div class="n">${esc(t.name)}</div><div class="d">${fmt(t.duration)}</div><div class="a">${esc(t.artist)}</div></div>`;
+  if (!v.total) {
+    $('#queue-list').innerHTML = '<div class="empty">还没有播放列表。<br>在「资料库」里点一首歌，就会从它开始按当前筛选出的列表播放，播完自动接下一首。</div>';
+    return;
+  }
+  const [cur, ...rest] = v.list;
+  const more = Math.max(v.at, 0) + v.list.length < v.total;
+  $('#queue-list').innerHTML =
+    (v.active ? '' : '<div class="empty" style="padding:14px 10px 4px">你在 Apple Music 里换了别的歌，或列表已经播完，所以没有在接着播。点下面任意一首继续。</div>') +
+    `<div class="queue-sec">${v.active ? '正在播放' : '停在'}</div>${cur ? row(cur, v.active) : ''}` +
+    (rest.length ? `<div class="queue-sec">接下来${v.shuffle ? '（随机）' : ''}</div>${rest.map((t) => row(t)).join('')}` : `<div class="queue-sec">${v.repeat ? '之后从头再来' : '这是最后一首'}</div>`) +
+    (more ? `<div class="empty" style="padding:12px"><button class="btn small" id="queue-more">显示更多（还有 ${v.total - Math.max(v.at, 0) - v.list.length} 首）</button></div>` : '');
+}
+$('#btn-queue').addEventListener('click', () => { queue.n = 150; $('#queue').hidden = false; loadQueue(); });
+$('#queue-list').addEventListener('click', (e) => {
+  if (e.target.closest('#queue-more')) { queue.n += 300; return loadQueue(); }
+  const row = e.target.closest('.track');
+  if (row) api.post('/api/queue/jump', { pid: row.dataset.pid }).then(onQueue, (err) => toast(err.message));
+});
+const setShuffle = (on) => api.post('/api/queue/shuffle', { on }).then((sum) => { onQueue(sum); toast(on ? '随机播放：开' : '随机播放：关'); }, () => {});
+$('#btn-shuffle').addEventListener('click', () => setShuffle(!queue.sum?.shuffle));
+$('#queue-shuffle').addEventListener('change', (e) => setShuffle(e.target.checked));
+$('#queue-repeat').addEventListener('change', (e) => api.post('/api/queue/repeat', { on: e.target.checked }).then(onQueue, () => {}));
 
 // ---------------- 词汇书 ----------------
 let vocabList = [];
