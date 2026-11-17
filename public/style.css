@@ -441,6 +441,7 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
 .offset-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 #offset-val { min-width: 74px; text-align: center; font: 600 16px var(--font); font-variant-numeric: tabular-nums; }
 #rp-input { font: 18px var(--font-ja); width: 100%; }
+#reading-pop { left: 0; top: 0; will-change: translate; } /* 位置由 translate 给：跟着正在改的那个字走 */
 .rp-scope { display: flex; gap: 14px; color: var(--fg-2); font-size: 12.5px; }
 
 .modal { position: fixed; inset: 0; z-index: 40; background: rgba(10, 8, 16, .55); display: grid; place-items: center; padding: 20px; }

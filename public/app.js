@@ -364,12 +364,19 @@ function scrollToActive(instant) {
   if (prefs.view !== 'apple' || elScroll.classList.contains('free')) return;
   if (instant) { for (const an of glideAnims) an.cancel(); glideAnims = []; jumpToActive(); } else glide(jumpToActive);
 }
+// 自己划走以后，过一会儿自动回到正在唱的那一句。
+// 修改模式下正改到一半（读音小窗或义项卡片开着）时不回去；改完以后从头再等这么久（见 editDone）。
+function armReturn() {
+  clearTimeout(freeTimer);
+  freeTimer = setTimeout(() => {
+    if (S.mode === 'edit' && (editing || !sensePop.hidden)) return armReturn();
+    elScroll.classList.remove('free');
+    scrollToActive();
+  }, S.mode ? 8000 : 3500);
+}
+function editDone() { if (elScroll.classList.contains('free')) armReturn(); }
 for (const ev of ['wheel', 'touchmove']) {
-  elScroll.addEventListener(ev, () => {
-    elScroll.classList.add('free');
-    clearTimeout(freeTimer);
-    freeTimer = setTimeout(() => { elScroll.classList.remove('free'); scrollToActive(); }, S.mode ? 8000 : 3500);
-  }, { passive: true });
+  elScroll.addEventListener(ev, () => { elScroll.classList.add('free'); armReturn(); }, { passive: true });
 }
 
 // ---------------- 每一帧：进度条、逐字填充、间奏的三个点 ----------------
@@ -1100,6 +1107,7 @@ sensePop.addEventListener('click', (e) => {
   for (const el of sensePop.querySelectorAll('.chip.alt')) before.set(`s:${sense.order[+el.dataset.i]}`, el.getBoundingClientRect());
 
   S.senses[a.key] = next;
+  editDone();
   sense.order = [...sense.order.filter((_, k) => k !== i), prev];  // 被换下的义项排到最下面
   paintAnnotations();
   sense.ann = annsAt(sense.li).find((x) => x.key === a.key && !x.off) || null;
@@ -1159,6 +1167,7 @@ sensePop.addEventListener('click', (e) => {
 async function toggleAnnotation(chip) {
   if (!S.song) return;
   hideSensePop();
+  editDone();
   const key = chip.dataset.key;
   const hide = !S.hiddenAnn.has(key);
   try { await api.post('/api/song/annotation', { key: S.song.key, ann: key, hidden: hide }); }
@@ -1219,6 +1228,7 @@ function endReading() {
   readingSegEl()?.classList.remove('editing');
   editing = null;
   $('#reading-pop').hidden = true;
+  editDone();
 }
 // 小窗开着的时候每一帧做的事：跟着那个字走；那一句滚出页面了就关掉
 function stepReading() {
@@ -1232,10 +1242,20 @@ function stepReading() {
   segEl.classList.add('editing');
   previewReading(editing.live || editing.orig); // 歌词重画过的话把预览补回去
   const r = segEl.getBoundingClientRect();
-  const left = `${Math.round(clamp(r.left - 20, 8, innerWidth - pop.offsetWidth - 8))}px`;
-  const top = `${Math.round(r.bottom + 10 + pop.offsetHeight > innerHeight ? Math.max(8, r.top - pop.offsetHeight - 10) : r.bottom + 10)}px`;
-  if (pop.style.left !== left) pop.style.left = left;
-  if (pop.style.top !== top) pop.style.top = top;
+  const tx = clamp(r.left - 20, 8, innerWidth - pop.offsetWidth - 8);
+  const ty = r.bottom + 10 + pop.offsetHeight > innerHeight ? Math.max(8, r.top - pop.offsetHeight - 10) : r.bottom + 10;
+  // 不死死贴着那个字（滚动和换行的弹簧动画会带着它一抖一抖），而是稍微缓一点地跟过去；停稳以后落在整像素上
+  const t = performance.now();
+  let p = editing.pos;
+  if (!p || noMotion.matches) p = editing.pos = { x: tx, y: ty, t };
+  else {
+    const k = 1 - Math.exp(-(t - p.t) / 80);
+    p.x += (tx - p.x) * k; p.y += (ty - p.y) * k; p.t = t;
+    if (Math.abs(tx - p.x) < 0.4 && Math.abs(ty - p.y) < 0.4) { p.x = tx; p.y = ty; }
+  }
+  const still = p.x === tx && p.y === ty;
+  const tr = still ? `${Math.round(p.x)}px ${Math.round(p.y)}px` : `${p.x.toFixed(2)}px ${p.y.toFixed(2)}px`;
+  if (pop.style.translate !== tr) pop.style.translate = tr;
   return true;
 }
 let readingLoop = false;
@@ -1252,6 +1272,7 @@ async function saveReading(reading) {
   } catch (e) { return toast(`保存失败：${e.message}`); }
   $('#reading-pop').hidden = true;
   editing = null;
+  editDone();
   await reloadSong();
   toast(reading === null ? '已恢复自动读音' : '读音已保存');
 }
