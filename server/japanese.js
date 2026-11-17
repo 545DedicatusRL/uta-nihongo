@@ -544,6 +544,7 @@ export async function analyzeLyrics(lines, opts = {}) {
         if (isContentWord(t)) tok.v = 1;
         if (tails[ri].f) tok.f = 1;
         if (tails[ri].j) tok.j = 1;
+        if (t.pos === '助詞' && t.pos_detail_1 === '終助詞') tok.fin = 1; // 句末的语气词（よ、ね、な、ぜ…）
         if (t.word_type === 'UNKNOWN' && [...s].some(isKanji)) tok.u = 1; // 分词器不认识的词：查到的词条要和读音对得上才用
         if (/^\s+$/.test(s)) tok.sp = 1;
         i0 += s.length;
