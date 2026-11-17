@@ -4,7 +4,7 @@
 
 ## 安装
 
-需要：一Mac、Apple Music 、[Node.js](https://nodejs.org)（「LTS」版即可）。
+需要：Mac、Apple Music 、[Node.js](https://nodejs.org)
 
 打开「终端」输入：
 
