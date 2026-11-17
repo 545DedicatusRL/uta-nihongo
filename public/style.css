@@ -182,6 +182,22 @@ ruby { ruby-align: center; }
   scale: calc(1 + .14 * var(--ea, 1) * var(--e, 0)); translate: 0 calc(-.05em * var(--e, 0));
   filter: drop-shadow(0 0 calc(.24em * var(--e, 0)) rgba(255, 255, 255, calc(.8 * var(--ea, 1) * var(--e, 0)))); }
 .dict-mode .timed .fu.emon, .edit-mode .timed .fu.emon { scale: none; translate: none; filter: none; }
+/* 按字拆开的汉字（长音强调开着时，见 app.js 的 jpHTML）：.rk 是注音里属于某一个汉字的那几个假名。
+   它不在那个汉字的 .fu 里面，所以 --p / --e / --ea 和 .on / .emon 由 app.js 照着那个汉字同步设过来，这里照着 .fu 的样子再写一遍。
+   长度都是按注音的字号算的（注音是正文的 .42 倍）；强调时汉字是绕着自己的中下部放大的，顶边会往上顶，注音要多让出这一截 */
+/* 行高要压住，不然这一行会比不拆的时候高：汉字和 .rk 都成了 inline-block，各自带着一整行的行高，
+   会把注音往上顶、把整行撑高。字是按基线对齐的，压行高不会让字挪位置 */
+.timed ruby > .ch.fu { line-height: 1; }
+.timed rt.rks { opacity: 1; line-height: .9; }
+.timed .rk { --p: 0; display: inline-block; color: rgba(255, 255, 255, calc(.4 + .6 * var(--p))); transition: transform var(--lt, .8s) var(--spring, cubic-bezier(.3, .1, .2, 1)); }
+.line.active.timed .rk.on, #f-cur.timed .rk.on { transform: translateY(-.167em); }
+.timed .rk.emon { transform-origin: 50% 100%; scale: calc(1 + .14 * var(--ea, 1) * var(--e, 0));
+  translate: 0 calc((-.12em - .24em * var(--ea, 1)) * var(--e, 0));
+  filter: drop-shadow(0 0 calc(.57em * var(--e, 0)) rgba(255, 255, 255, calc(.8 * var(--ea, 1) * var(--e, 0)))); }
+.dict-mode .timed .rk.on, .edit-mode .timed .rk.on { transform: none !important; }
+.dict-mode .timed .rk.emon, .edit-mode .timed .rk.emon { scale: none; translate: none; filter: none; }
+.dict-mode .timed .rk, .edit-mode .timed .rk, .line:not(.active).timed .rk { color: inherit; }
+.line:not(.active).timed rt.rks { opacity: .82; }
 .line:not(.active).timed .fu { background: none; color: inherit; }
 .line:not(.active).timed .fu rt { color: inherit; opacity: .82; }
 
@@ -544,5 +560,5 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
   .view-focus #meta { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .vbody, .line, .f-cur, .drawer, .timed .fu, .line.active .ann, .line.ann-on .ann, .line .ann.leaving, .dots.idle .dots-g, .line.gap.active .dots, #f-cur .dots { transition: none; animation: none; }
+  .vbody, .line, .f-cur, .drawer, .timed .fu, .timed .rk, .line.active .ann, .line.ann-on .ann, .line .ann.leaving, .dots.idle .dots-g, .line.gap.active .dots, #f-cur .dots { transition: none; animation: none; }
 }

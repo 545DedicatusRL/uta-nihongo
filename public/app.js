@@ -216,6 +216,7 @@ function setArt(track, cover) {
 // 一、哪个音算长音。看的是「拖了多久」= 这一段的时长 −（音数 − 1）× 平常一个音的时长：
 //   - 假名：一个假名一个音，拖了多久就是它自己的时长；小写的ゃゅょ等和前一个假名算同一个音
 //   - 带注音的汉字：按读音的音数算（「色褪」いろあ = 3 个音，1.5 秒里有两个音是平常地唱过去的，剩下的 1 秒是拖的）；
+//     几个汉字连在一起的（宝物）按字拆开，一个字算一个单位，各用各的读音（たから 3 个音、もの 2 个音），见 kanjiParts；
 //     没有读音的汉字按两个音算。（直接用「时长 ÷ 音数」的话，多音的汉字几乎永远够不到门槛）
 //   - 英文单词：按音节数算，门槛放宽一些
 //   拖得不到 HOLD_MIN 的完全不触发。
@@ -246,6 +247,21 @@ const HOLD_NO_PARTICLE = true; // 独立的助词不参与（见上面第三条�
 const SMALL_KANA = /[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/;
 const moraCount = (s) => { let n = 0; for (const c of s) if (/[ぁ-ゖァ-ヺー〜～]/.test(c) && !SMALL_KANA.test(c)) n++; return n; };
 const syllables = (w) => Math.max(1, (w.toLowerCase().replace(/e$/, '').match(/[aeiouy]+/g) || []).length);
+// 几个汉字连在一起、共用一段注音的（宝物 / たからもの）：能不能按字拆开，每个字各自填色、各自抬起。
+// 要两样东西都有：服务器把读音按字分好了（seg.rs = ['たから', 'もの']，见 server/kanji-readings.js），而且每个字都有自己的时间。
+// 返回 [{ ch 这个字, c 它的字符下标, r 它头上的那几个假名, tm [开始, 结束] }]，拆不了返回 null（那就整段当一个单位）
+function kanjiParts(line, seg, c0) {
+  const chars = [...seg.t], rs = seg.rs;
+  if (!rs || rs.length !== chars.length || rs.join('').length !== seg.r.length) return null;
+  const out = [];
+  for (let k = 0, c = c0, at = 0; k < chars.length; k++) {
+    const tm = line.ct?.[c];
+    if (!tm) return null;
+    out.push({ ch: chars[k], c, r: seg.r.slice(at, at + rs[k].length), tm });
+    c += chars[k].length; at += rs[k].length;
+  }
+  return out;
+}
 // 返回 Map：字符下标 → { a: 强度 0–1, t0: 从什么时候冒起来, t1: 什么时候开始落, q: 后面紧跟着别的字（要快点落） }。每句只算一次
 function holdPlan(line) {
   if (line._hold) return line._hold;
@@ -280,7 +296,12 @@ function holdPlan(line) {
     for (const seg of tok.segs) {
       const c0 = ci, len = seg.t.length;
       ci += len;
-      if (KANJI.test(seg.t) && seg.r) { push(Array.from({ length: len }, (_, k) => c0 + k), moraCount(seg.r) || len * 2); continue; }
+      if (KANJI.test(seg.t) && seg.r) {
+        const parts = kanjiParts(line, seg, c0);
+        if (parts) for (const p of parts) push(Array.from({ length: p.ch.length }, (_, k) => p.c + k), moraCount(p.r) || 2);
+        else push(Array.from({ length: len }, (_, k) => c0 + k), moraCount(seg.r) || len * 2);
+        continue;
+      }
       for (let k = 0; k < len;) {
         let e = k + 1;
         while (e < len && SMALL_KANA.test(seg.t[e])) e++;
@@ -320,13 +341,17 @@ function paintHold(s, t) {
   const e = holdEnv(s, t);
   if (e === s.e) return;
   s.e = e;
-  if (e) { s.el.style.setProperty('--e', e); if (!s.emon) { s.emon = true; s.el.classList.add('emon'); } }
-  else clearHold(s);
+  if (e) {
+    s.el.style.setProperty('--e', e); s.rk?.style.setProperty('--e', e);
+    if (!s.emon) { s.emon = true; s.el.classList.add('emon'); s.rk?.classList.add('emon'); }
+  } else clearHold(s);
 }
 function clearHold(s) {
   s.e = 0; s.emon = false;
   s.el.classList.remove('emon');
   s.el.style.removeProperty('--e');
+  s.rk?.classList.remove('emon');
+  s.rk?.style.removeProperty('--e');
 }
 // 换到下一句时，上一句最后那个长音可能还没落回去：留在这里接着落完
 let holdTail = [];
@@ -345,21 +370,30 @@ function jpHTML(line, li) {
       // 逐字歌词里的「填充单位」（class="fu"）：按时间填色、唱到时抬起来的最小单位。
       //   - 普通的字：一个字一个单位，于是一个词里的字是一个接一个抬起来的，像一道波
       //   - 带注音的汉字：整个汉字连同上面的假名是一个单位（拆开的话注音就跟不上了）
+      //   - 实验功能「长音强调」开着时，几个汉字连在一起的（宝物）按字拆开：每个汉字一个单位，注音里属于它的那几个假名
+      //     包成一个 .rk，由 app.js 让它跟着这个汉字一起变亮、抬起（collectFill 里配对）。注音的排版不变，还是整段居中
       // --lt：抬起来的弹簧动画总共多长。弹簧起步慢、收尾长，所以取这个字时长的两倍多，
       // 最短也有 0.75 秒：相邻的字一个还没抬完、下一个已经起步，叠在一起才不显得一格一格的
+      const lt = (t0, t1) => `style="--lt:${clamp((t1 - t0) * 2.6, 0.75, 1.6).toFixed(2)}s"`;
       const unit = (t0, t1, c) => {
         const h = hold.get(c);
-        return ` data-t0="${t0}" data-t1="${t1}"${h ? ` data-em="${h.a.toFixed(2)},${h.t0},${h.t1},${h.q ? 1 : 0}"` : ''} style="--lt:${clamp((t1 - t0) * 2.6, 0.75, 1.6).toFixed(2)}s"`;
+        return ` data-t0="${t0}" data-t1="${t1}"${h ? ` data-em="${h.a.toFixed(2)},${h.t0},${h.t1},${h.q ? 1 : 0}"` : ''} ${lt(t0, t1)}`;
       };
-      let chars = '';
-      for (const ch of seg.t) {
+      const parts = ruby && prefs.fxHold ? kanjiParts(line, seg, c0) : null;
+      let chars = '', rks = '';
+      if (parts) for (const p of parts) {
+        chars += `<span class="ch fu" data-c="${p.c}"${unit(p.tm[0], p.tm[1], p.c)}>${esc(p.ch)}</span>`;
+        rks += `<span class="rk" ${lt(p.tm[0], p.tm[1])}>${esc(p.r)}</span>`;
+        ci = p.c + p.ch.length;
+      }
+      else for (const ch of seg.t) {
         const tm = !ruby && line.ct?.[ci];
         chars += `<span class="ch${tm ? ' fu' : ''}" data-c="${ci}"${tm ? unit(tm[0], tm[1], ci) : ''}>${esc(ch)}</span>`;
         ci += ch.length;
       }
-      const whole = ruby && line.ct?.[c0] ? unit(line.ct[c0][0], (line.ct[ci - 1] || line.ct[c0])[1], c0) : '';
+      const whole = ruby && !parts && line.ct?.[c0] ? unit(line.ct[c0][0], (line.ct[ci - 1] || line.ct[c0])[1], c0) : '';
       const cls = `seg${isK ? ' k' : ''}${whole ? ' fu' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
-      inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}<rt>${esc(seg.r)}</rt></ruby>` : chars}</span>`;
+      inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}${parts ? `<rt class="rks">${rks}</rt>` : `<rt>${esc(seg.r)}</rt>`}</ruby>` : chars}</span>`;
     });
     html += `<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
   });
@@ -378,6 +412,19 @@ function renderLines() {
   let n = 0;
   S.vis = S.lines.map((line) => (line.gap ? n : ++n));
   paintSelection();
+}
+
+// 逐字歌词的字重新画一遍（「长音强调」开关变了：汉字要不要按字拆开不一样），别的都不动
+function redrawTimed() {
+  $$('#scroll .line.timed').forEach((el) => {
+    const li = +el.dataset.i, jp = $('.jp', el);
+    if (jp && S.lines[li]) jp.innerHTML = jpHTML(S.lines[li], li);
+  });
+  if (!S.lines.length || S.active === -2) return;
+  renderFocus();
+  paintAnnotations();
+  paintSelection();
+  collectFill();
 }
 
 function renderFocus() {
@@ -483,13 +530,18 @@ function collectFill() {
   else if (line.ct) {
     S.fill = { segs: $$('.fu', root).map((el) => {
       el.classList.remove('on');
-      const s = { el, t0: +el.dataset.t0, t1: +el.dataset.t1, d: Math.max(0.05, el.dataset.t1 - el.dataset.t0), p: -1, on: false };
+      // 按字拆开的汉字：注音里属于它的那几个假名（rt 里和它同一个位置的 .rk）跟着它一起动
+      const ruby = el.parentNode.tagName === 'RUBY' ? el.parentNode : null;
+      const rk = ruby && ruby.lastElementChild.classList.contains('rks') ? ruby.lastElementChild.children[Array.prototype.indexOf.call(ruby.children, el)] : null;
+      rk?.classList.remove('on');
+      const s = { el, rk, t0: +el.dataset.t0, t1: +el.dataset.t1, d: Math.max(0.05, el.dataset.t1 - el.dataset.t0), p: -1, on: false };
       const old = holdTail.find((x) => x.el === el); // 同一句重新收集（切换显示方式等）：接着原来的状态
       if (fx && el.dataset.em) {
         const [a, h0, h1, q] = el.dataset.em.split(',').map(Number), hd = Math.max(0.05, h1 - h0);
         // 弹簧的快慢：短的音快一点，长的慢一点；后面紧跟着别的字的（波浪里的）比这一段的最后一个快，好给后面的让位
         Object.assign(s, { em: true, h0, h1, tau: q ? clamp(hd * 0.3, 0.1, 0.14) : clamp(hd * 0.3, 0.11, 0.15), e: old?.e || 0, emon: !!old?.emon });
         el.style.setProperty('--ea', a);
+        rk?.style.setProperty('--ea', a);
       } else if (old) clearHold(old);
       return s;
     }) };
@@ -663,10 +715,10 @@ function tick() {
     if (s.em) paintHold(s, t);
     // 填充进度：唱过的和还没唱到的词不会变，实际每帧只会改到正在唱的那一两个
     const p = t <= s.t0 ? 0 : t >= s.t1 ? 1 : Math.round((t - s.t0) / s.d * 200) / 200;
-    if (p !== s.p) { s.p = p; s.el.style.setProperty('--p', p); }
+    if (p !== s.p) { s.p = p; s.el.style.setProperty('--p', p); s.rk?.style.setProperty('--p', p); }
     // 唱到了就抬起来：只切一次 class，抬起的过程交给 CSS 过渡
     const on = t >= s.t0 - LIFT_LEAD;
-    if (on !== s.on) { s.on = on; s.el.classList.toggle('on', on); }
+    if (on !== s.on) { s.on = on; s.el.classList.toggle('on', on); s.rk?.classList.toggle('on', on); }
   }
 }
 function frame() {
@@ -2189,7 +2241,7 @@ $('#set-clear-senses').addEventListener('click', async () => {
   paintAnnotations();
   toast('已清除，这首歌的多义词恢复自动选义');
 });
-$('#set-fx-hold').addEventListener('change', (e) => { prefs.fxHold = e.target.checked; savePrefs(); collectFill(); });
+$('#set-fx-hold').addEventListener('change', (e) => { prefs.fxHold = e.target.checked; savePrefs(); redrawTimed(); });
 $('#set-fx-group').addEventListener('change', (e) => { prefs.fxGroup = e.target.checked; savePrefs(); markGroups(); if (S.lines.length && S.active > -2) setActive(S.active); });
 for (const id of ['set-style', 'set-max', 'set-grammar', 'set-vocabs', 'set-source', 'set-lang', 'set-autosense', 'set-levels']) $(`#${id}`).addEventListener('input', onAnnPrefChange);
 async function saveSettings() {

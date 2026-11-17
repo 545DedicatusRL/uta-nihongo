@@ -3,13 +3,18 @@ import path from 'node:path';
 import kuromoji from 'kuromoji';
 import { ROOT } from './store.js';
 import { matchGrammar } from './grammar.js';
+import { splitKanjiReading, warmKanjiReadings } from './kanji-readings.js';
 
 let tokenizerPromise = null;
 export function getTokenizer() {
   if (!tokenizerPromise) {
     tokenizerPromise = new Promise((resolve, reject) => {
       kuromoji.builder({ dicPath: path.join(ROOT, 'node_modules/kuromoji/dict') })
-        .build((err, t) => (err ? reject(err) : resolve(t)));
+        .build((err, t) => {
+          if (err) return reject(err);
+          resolve(t);
+          setTimeout(() => warmKanjiReadings(t), 0);
+        });
     });
   }
   return tokenizerPromise;
@@ -603,6 +608,8 @@ export async function analyzeLyrics(lines, opts = {}) {
       }));
       for (const tok of tokens) {
         for (const g of tok.segs) delete g.m;
+        // 逐字歌词：多个汉字的注音段把读音按字拆开（宝物 → たから｜もの），前端用它让每个字各自抬起
+        if (line.ct) for (const g of tok.segs) { const rs = g.r && splitKanjiReading(tokenizer, g.t, g.r); if (rs) g.rs = rs; }
         tok.r = tok.segs.map((g) => (g.r !== undefined ? g.r : toHira(g.t))).join('');
         const h = tok.v ? readingHint(tok) : '';
         if (h) tok.h = h;
