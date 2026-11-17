@@ -186,6 +186,25 @@ const ZH_FIX = {
 };
 const withFix = (w, e) => (ZH_FIX[w] && e && !e.miss ? { ...e, zh: ZH_FIX[w], zhs: [ZH_FIX[w]] } : e);
 
+// 可能形和使役形：分词器把「許せる」「歌わす」当成独立的词，词典里收的却是「許す」「歌う」。
+// 光看词形分不出来——「開ける」「届ける」「進める」长得一样，却是另外的词——所以让词典来判断：
+//   可能形（え段 + る）：词典里没有这个词，或者词典的解释就是「能…」（to be able to…），而把 え段 换成 う段
+//                        之后是个查得到的动词 → 用那个动词（許せる → 許す、走れる → 走る、見れる → 見る）
+//   使役形（あ段 + す / せる）：词典里没有这个词，换成 う段 之后是个查得到的动词（歌わす → 歌う）
+// 词典里本来就有、解释也不是「能…」的（開ける、笑える、泣かせる）不动。
+const E2U = { え: 'う', け: 'く', げ: 'ぐ', せ: 'す', て: 'つ', ね: 'ぬ', べ: 'ぶ', め: 'む', れ: 'る' };
+const A2U = { わ: 'う', か: 'く', が: 'ぐ', さ: 'す', た: 'つ', な: 'ぬ', ば: 'ぶ', ま: 'む', ら: 'る' };
+const ABLE = /^(to be able to|to be possible to|can )/i;
+function derivedFrom(w, e) {
+  let m = w.match(/^(.+)([えけげせてねべめれ])る$/);
+  if (m && (e.miss || ABLE.test(e.en?.[0] || ''))) return { w: m[1] + E2U[m[2]], kind: 'pot', cut: m[2] };
+  m = w.match(/^(.+)([わかがさたなばまら])(?:せる|す)$/);
+  if (m && e.miss) return { w: m[1] + A2U[m[2]], kind: 'caus', cut: m[2] };
+  return null;
+}
+// 读音提示是「词干」那一段（ゆるせ）：去掉变掉的那个假名以后（ゆる）才对得上原形（ゆるす）
+const hintFor = (h, cut) => { const at = h.lastIndexOf(cut); return at > 0 ? h.slice(0, at) : ''; };
+
 // 批量查询（带并发限制 + 本地缓存）。onlyCached=true 时不发网络请求。
 // words 里的每一项是「词」或「词|读音提示」（见 japanese.js 的 readingHint）；返回值按原样的键给回去。
 // onlyCached 时，需要重新查的旧条目也先给回去，带上 stale 标记，界面先用着，再联网补。
@@ -199,37 +218,52 @@ export async function lookupWords(words, onlyCached = false) {
     if (e && !stale(e, h)) continue;
     if (!onlyCached) todo.set(w, todo.get(w) || !e || e.zhs !== undefined);
   }
-  const list = [...todo];
-  let i = 0;
-  const worker = async () => {
-    while (i < list.length) {
-      const [w, fresh] = list[i++];
-      try {
-        const e = fresh ? await jisho(w) : c[w];
-        // 中文释义：先按原词查，再试其他写法；失败（网络问题）时不写进缓存，下次重试
-        const lists = new Map();
-        const listFor = async (f) => { if (!lists.has(f)) lists.set(f, await youdaoList(f)); return lists.get(f); };
-        const forms = [w, ...(e.alts || [])];
-        let zh = null;
-        if (hasKanji(w) && !e.miss && e.r) zh = await chineseByReading(forms, [e.r, ...(e.rs || [])], listFor, true);
-        else for (const f of forms) { zh = pickYoudao(await listFor(f), f, e.w !== w ? e.w : undefined); if (zh) break; }
-        if (zh) {
-          e.zh = zh.zh;
-          e.zhs = zh.zhs;
-          if (e.miss) { delete e.miss; e.w = w; e.r = zh.r; e.lv = ''; e.en = []; }
-        } else { e.zh = ''; e.zhs = []; }
-        for (const m of e.more || []) {
-          const hit = await chineseByReading([w], [m.r, ...(m.rs || [])], listFor, false);
-          m.zh = hit ? hit.zh : '';
-          m.zhs = hit ? hit.zhs : [];
-        }
-        e.cv = CV;
-        c[w] = e;
-        dirty = true;
-      } catch { /* 网络失败：不缓存，下次重试 */ }
-    }
+  const fill = async (list) => {
+    let i = 0;
+    const worker = async () => {
+      while (i < list.length) {
+        const [w, fresh] = list[i++];
+        try {
+          const e = fresh ? await jisho(w) : c[w];
+          // 中文释义：先按原词查，再试其他写法；失败（网络问题）时不写进缓存，下次重试
+          const lists = new Map();
+          const listFor = async (f) => { if (!lists.has(f)) lists.set(f, await youdaoList(f)); return lists.get(f); };
+          const forms = [w, ...(e.alts || [])];
+          let zh = null;
+          if (hasKanji(w) && !e.miss && e.r) zh = await chineseByReading(forms, [e.r, ...(e.rs || [])], listFor, true);
+          else for (const f of forms) { zh = pickYoudao(await listFor(f), f, e.w !== w ? e.w : undefined); if (zh) break; }
+          if (zh) {
+            e.zh = zh.zh;
+            e.zhs = zh.zhs;
+            if (e.miss) { delete e.miss; e.w = w; e.r = zh.r; e.lv = ''; e.en = []; }
+          } else { e.zh = ''; e.zhs = []; }
+          for (const m of e.more || []) {
+            const hit = await chineseByReading([w], [m.r, ...(m.rs || [])], listFor, false);
+            m.zh = hit ? hit.zh : '';
+            m.zhs = hit ? hit.zhs : [];
+          }
+          e.cv = CV;
+          c[w] = e;
+          dirty = true;
+        } catch { /* 网络失败：不缓存，下次重试 */ }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
   };
-  await Promise.all([worker(), worker(), worker()]);
+  await fill([...todo]);
+  // 可能形 / 使役形：要用到原形的词条，没查过的这时候补查
+  const via = new Map();
+  const more = new Map();
+  for (const { key, w, h } of keys) {
+    const e = c[w];
+    const dv = e && e.zhs !== undefined ? derivedFrom(w, e) : null;
+    if (!dv) continue;
+    dv.h = hintFor(h, dv.cut);
+    via.set(key, dv);
+    const e2 = c[dv.w];
+    if (!onlyCached && (!e2 || stale(e2, dv.h))) more.set(dv.w, more.get(dv.w) || !e2 || e2.zhs !== undefined);
+  }
+  if (more.size) await fill([...more]);
   for (const { key, w, h } of keys) {
     const e = c[w];
     if (!e) continue;
@@ -237,6 +271,13 @@ export async function lookupWords(words, onlyCached = false) {
     if (old && !onlyCached && e.zhs === undefined) continue; // 这次没查成：不给半截的结果
     out[key] = withFix(w, select(e, h));
     if (old && onlyCached) out[key] = { ...out[key], stale: 1 };
+    const dv = via.get(key);
+    if (!dv) continue;
+    const e2 = c[dv.w];
+    if (e2 && !e2.miss && e2.zhs !== undefined && (e2.pos || []).some((p) => /verb/i.test(p))) {
+      // 给回原形的词条，带上是从哪个词、按哪种变形找过来的
+      out[key] = { ...withFix(dv.w, select(e2, dv.h)), via: dv.kind, from: w };
+    } else if (onlyCached && (!e2 || e2.zhs === undefined)) out[key] = { ...out[key], stale: 1 }; // 原形还没查过：先这样，联网后再补
   }
   return out;
 }

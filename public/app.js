@@ -537,8 +537,10 @@ function annotationsFor(line) {
         if (!d.lv && !d.common && !d.zh) return;
         // 纯假名写的动词（如可能形「なれる」）在词典里常对到别的词，宁可不标
         if (tok.pos === '动' && !KANJI.test(tok.b) && d.w !== tok.b) return;
-        const m = chooseMeaning(d, line, `v:${tok.b}`);
-        items.push({ type: 'v', title: tok.b, rd: d.r, lv: d.lv, desc: m.text, senses: m.senses, pick: m.zh, how: m.how, start: ti, end: ti + 1 });
+        // 可能形 / 使役形（許せる、歌わす）：词典给回的是原形的词条（許す、歌う），标注也用原形
+        const title = d.via ? d.w : tok.b;
+        const m = chooseMeaning(d, line, `v:${title}`);
+        items.push({ type: 'v', title, rd: d.r, lv: d.lv, desc: m.text, senses: m.senses, pick: m.zh, how: m.how, start: ti, end: ti + 1 });
       });
     }
   }
@@ -880,9 +882,18 @@ function dictForm(toks, s, text) {
   const stem = toks[k];
   if (toks.length > 1 && stem.f) return none; // 选中的全是尾巴
   const before = toks.slice(0, k).map((t) => t.s).join('');
-  if (stem.b === 'する' && k > 0 && toks[k - 1].pos === '名') return { base: before, head: k === 1 ? toks[0] : null, cut: k, stem: null };
+  if ((stem.b === 'する' || (stem.b === 'できる' && stem.j)) && k > 0 && toks[k - 1].pos === '名') return { base: before, head: k === 1 ? toks[0] : null, cut: k, stem: null };
   return { base: before + stem.b, head: k === 0 ? stem : null, cut: k, stem };
 }
+// 可能形 / 使役形还原成原形以后的读音：ゆるせる → ゆるす、うたわす → うたう（推不出来就用词典的）
+const E2U = { え: 'う', け: 'く', げ: 'ぐ', せ: 'す', て: 'つ', ね: 'ぬ', べ: 'ぶ', め: 'む', れ: 'る' };
+const A2U = { わ: 'う', か: 'く', が: 'ぐ', さ: 'す', た: 'つ', な: 'ぬ', ば: 'ぶ', ま: 'む', ら: 'る' };
+function viaReading(r, d) {
+  if (!r || d.w.endsWith('来る')) return d.r;
+  const m = d.via === 'pot' ? r.match(/^(.*)([えけげせてねべめれ])る$/) : r.match(/^(.*)([わかがさたなばまら])(?:せる|す)$/);
+  return m ? m[1] + (d.via === 'pot' ? E2U : A2U)[m[2]] : d.r;
+}
+const VIA_NAME = { pot: '可能形', caus: '使役形' };
 let dictSeq = 0;
 let dictHit = null; // 底栏里现在这个词查到的词条（加入词汇书时取它的级别）
 function updateDictBar(fresh) {
@@ -895,7 +906,7 @@ function updateDictBar(fresh) {
   if (fresh) { w.dataset.dirty = r.dataset.dirty = m.dataset.dirty = ''; }
   const canBase = info.base !== info.text;
   const useBase = canBase && S.sel.form !== 'surface';
-  const word = useBase ? info.base : info.text;
+  let word = useBase ? info.base : info.text;
   // 原形来自一个带汉字的词：连同歌词里实际唱的读音一起查（辛い 是 からい 还是 つらい）
   const key = useBase && info.head?.h && info.head.b === word ? dictKey(info.head) : word;
   if (!w.dataset.dirty) w.value = word;
@@ -904,13 +915,30 @@ function updateDictBar(fresh) {
   const ai = info.line.ai?.vocab.find((v) => v.b === word || v.text === info.text);
   if (ai && !m.dataset.dirty) m.value = ai.zh;
   if (ai && useBase && !r.dataset.dirty) r.value = ai.r;
-  const swap = canBase
-    ? `　<a data-form="${useBase ? 'surface' : 'base'}">改用${useBase ? `歌词里的形式「${esc(info.text)}」` : `原形「${esc(info.base)}」`}</a>` : '';
+  // 原形本身是可能形 / 使役形时（許せる），「原形」说的是再还原一步的那个词（許す）
+  const baseD = S.dict[info.head?.h && info.head.b === info.base ? dictKey(info.head) : info.base];
+  const baseName = baseD?.via && baseD.from === info.base ? baseD.w : info.base;
+  let swap = canBase
+    ? `　<a data-form="${useBase ? 'surface' : 'base'}">改用${useBase ? `歌词里的形式「${esc(info.text)}」` : `原形「${esc(baseName)}」`}</a>` : '';
   $('#db-info').innerHTML = `查询中…${swap}`;
   const seq = ++dictSeq;
   dictHit = null;
   lookup(key).then((d) => {
     if (seq !== dictSeq) return;
+    // 这个词本身是可能形 / 使役形（許せる、歌わす）：再还原一步，记成 許す、歌う
+    let viaNote = '';
+    if (d?.via && !d.miss && word === d.from) {
+      if (S.sel.form === 'surface') { // 用户要照歌词里的样子记：只告诉他这是谁的什么形，不替他填
+        const zh = (d.zhs?.length ? d.zhs : [d.zh || d.en?.[0] || '']).join(' ｜ ');
+        $('#db-info').innerHTML = `「${esc(word)}」是「${esc(d.w)}」的${VIA_NAME[d.via]}：${esc(zh)}　<a data-form="base">改用原形「${esc(d.w)}」</a>`;
+        return;
+      }
+      viaNote = `　<span class="muted">歌词里是它的${VIA_NAME[d.via]}「${esc(d.from)}」</span>`;
+      if (!canBase) swap = `　<a data-form="surface">改用歌词里的形式「${esc(info.text)}」</a>`;
+      word = d.w;
+      if (!w.dataset.dirty) w.value = word;
+      if (!r.dataset.dirty) r.value = viaReading(useBase ? info.baseReading : info.reading, d);
+    }
     if (d && !d.miss) dictHit = { word, d };
     if (!d || d.miss) {
       $('#db-info').innerHTML = `词典里没有查到「${esc(word)}」，可以自己填写释义。${swap}`;
@@ -929,7 +957,7 @@ function updateDictBar(fresh) {
     const showEn = lang !== 'zh' || !zhs.length;
     const enHTML = !showEn ? '' : lang === 'en' ? pickable(ens, (x) => x) : esc(ens.join('; '));
     const detail = [lang === 'en' ? esc(zhs.join(' ｜ ')) : zhHTML, enHTML].filter(Boolean).join('　');
-    $('#db-info').innerHTML = `${d.lv ? `<span class="lv">${d.lv}</span>` : ''}${esc(d.w)}【${esc(d.r)}】 ${detail}${swap}`;
+    $('#db-info').innerHTML = `${d.lv ? `<span class="lv">${d.lv}</span>` : ''}${esc(d.w)}【${esc(d.r)}】 ${detail}${viaNote}${swap}`;
     markSense();
   });
 }
@@ -1022,11 +1050,18 @@ document.addEventListener('mouseover', (e) => {
   if (chip || e.target.closest?.('#sense-pop')) {
     clearTimeout(sense.timer);
     if (chip && (sensePop.hidden || sense.ann?.key !== chip.dataset.key || sense.box !== chip.closest('.ann, #f-ann'))) openSensePop(chip);
-  } else if (!sensePop.hidden) {
-    clearTimeout(sense.timer);
-    sense.timer = setTimeout(hideSensePop, 300); // 留一点时间把鼠标移到卡片上
   }
 });
+// 收起要跟手：鼠标一离开「标注、义项卡、两者之间那道缝」就收，不等
+document.addEventListener('mousemove', (e) => {
+  if (sensePop.hidden || sense.busy || !sense.ann) return;
+  const hit = (r, pad = 3) => e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
+  const p = sensePop.getBoundingClientRect(), c = currentSenseChip()?.getBoundingClientRect();
+  if (hit(p) || (c && hit(c))) return;
+  if (c && hit({ left: Math.min(c.left, p.left), right: Math.max(c.right, p.right), top: Math.min(c.bottom, p.bottom), bottom: Math.max(c.top, p.top) })) return;
+  hideSensePop();
+});
+document.documentElement.addEventListener('mouseleave', hideSensePop);
 // 换义项的动画用的替身：歌词区有裁切和层级限制，所以在最上层放一张一模一样的卡来飞
 function ghostChip(el, rect, hostClass) {
   const host = document.createElement('div');
@@ -1143,19 +1178,70 @@ function editClick(e) {
   const li = +jp.dataset.li, ti = +segEl.closest('.tok').dataset.ti, si = +segEl.dataset.si;
   const line = S.lines[li];
   const seg = line.tokens[ti].segs[si];
-  editing = { line, ti, si, seg };
+  endReading(); // 上一个还开着：先把它的预览还原
+  editing = { line, li, ti, si, seg, orig: seg.r || '', live: null };
   $('#rp-seg').textContent = seg.t;
   $('#rp-input').value = seg.r || '';
   const from = { roma: '已按歌词源的罗马音自动纠正', qq: '已按 QQ 音乐的注音自动纠正', user: '你修改过这个读音' }[seg.src];
   $('#rp-info').textContent = [from, seg.auto ? `词典读音：${seg.auto}` : ''].filter(Boolean).join('　') || '词典自动标注';
   $('#rp-reset').hidden = seg.src !== 'user';
   $('input[name=rp-scope][value=here]').checked = true;
-  const pop = $('#reading-pop');
-  pop.hidden = false;
-  const r = segEl.getBoundingClientRect();
-  pop.style.left = `${clamp(r.left - 20, 8, innerWidth - pop.offsetWidth - 8)}px`;
-  pop.style.top = `${r.bottom + 10 + pop.offsetHeight > innerHeight ? Math.max(8, r.top - pop.offsetHeight - 10) : r.bottom + 10}px`;
+  $('#reading-pop').hidden = false;
+  stepReading();
+  if (!readingLoop) { readingLoop = true; requestAnimationFrame(watchReading); }
   $('#rp-input').focus(); $('#rp-input').select();
+}
+// 正在改的那个汉字现在在页面上的哪里（滚动样式里在它那一行，大字样式里在当前句）
+function readingSegEl() {
+  if (!editing) return null;
+  const root = prefs.view === 'focus' ? $('#f-cur') : elScroll;
+  return root.querySelector(`.jp[data-li="${editing.li}"] .tok[data-ti="${editing.ti}"] .seg[data-si="${editing.si}"]`);
+}
+// 把字上面的假名临时换成 r（边输入边看效果；没保存就关掉的话会换回去）
+function previewReading(r) {
+  const segEl = readingSegEl();
+  if (!segEl) return;
+  let rt = segEl.querySelector('rt');
+  if (!rt) {
+    if (!r) return;
+    const ruby = document.createElement('ruby');
+    ruby.append(...segEl.childNodes);
+    rt = document.createElement('rt');
+    ruby.append(rt);
+    segEl.append(ruby);
+  }
+  if (rt.textContent !== r) rt.textContent = r;
+}
+// 关掉小窗；没保存的话，字上面的假名变回打开前的样子
+function endReading() {
+  if (!editing) return;
+  previewReading(editing.orig);
+  readingSegEl()?.classList.remove('editing');
+  editing = null;
+  $('#reading-pop').hidden = true;
+}
+// 小窗开着的时候每一帧做的事：跟着那个字走；那一句滚出页面了就关掉
+function stepReading() {
+  if (!editing) return false;
+  const pop = $('#reading-pop');
+  if (pop.hidden) { endReading(); return false; } // 被别处关掉了（Esc、点到外面）
+  const segEl = readingSegEl();
+  const view = $(prefs.view === 'focus' ? '#focus' : '#lyrics').getBoundingClientRect();
+  const lr = segEl?.closest('.line, #f-cur')?.getBoundingClientRect();
+  if (!lr || !lr.height || lr.bottom <= Math.max(0, view.top) || lr.top >= Math.min(innerHeight, view.bottom)) { endReading(); return false; }
+  segEl.classList.add('editing');
+  previewReading(editing.live || editing.orig); // 歌词重画过的话把预览补回去
+  const r = segEl.getBoundingClientRect();
+  const left = `${Math.round(clamp(r.left - 20, 8, innerWidth - pop.offsetWidth - 8))}px`;
+  const top = `${Math.round(r.bottom + 10 + pop.offsetHeight > innerHeight ? Math.max(8, r.top - pop.offsetHeight - 10) : r.bottom + 10)}px`;
+  if (pop.style.left !== left) pop.style.left = left;
+  if (pop.style.top !== top) pop.style.top = top;
+  return true;
+}
+let readingLoop = false;
+function watchReading() {
+  if (!stepReading()) { readingLoop = false; return; }
+  requestAnimationFrame(watchReading);
 }
 async function saveReading(reading) {
   if (!editing) return;
@@ -1169,9 +1255,19 @@ async function saveReading(reading) {
   await reloadSong();
   toast(reading === null ? '已恢复自动读音' : '读音已保存');
 }
-$('#rp-save').addEventListener('click', () => saveReading(toHira($('#rp-input').value.trim())));
+$('#rp-save').addEventListener('click', () => {
+  const v = toHira($('#rp-input').value.trim());
+  if (!v) return endReading(); // 什么都没填就确认：当作没改，回到打开前的读音
+  saveReading(v);
+});
 $('#rp-reset').addEventListener('click', () => saveReading(null));
-$('#rp-cancel').addEventListener('click', () => { $('#reading-pop').hidden = true; });
+$('#rp-cancel').addEventListener('click', endReading);
+// 边输入，字上面的假名边跟着变
+$('#rp-input').addEventListener('input', () => {
+  if (!editing) return;
+  editing.live = toHira($('#rp-input').value.trim());
+  previewReading(editing.live || editing.orig);
+});
 $('#rp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#rp-save').click(); });
 
 // ---------------- 资料库 ----------------
@@ -2051,4 +2147,4 @@ requestAnimationFrame(frame);
   if (q.has('guide') || (!prefs.guide && !q.has('debug'))) setTimeout(showGuide, 900);
 }
 // 调试入口：地址加 ?debug 后可在控制台用 __uta.onState(...) 模拟播放状态
-if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs, tick }; }
+if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs, tick, stepReading }; }

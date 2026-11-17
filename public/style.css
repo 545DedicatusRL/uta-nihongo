@@ -252,6 +252,9 @@ ruby { ruby-align: center; }
 .edit-mode .line.gap, .edit-mode .tok { cursor: default; }
 .edit-mode .seg.k { outline: 1px dashed var(--fg-4); outline-offset: 1px; border-radius: 4px; cursor: text; }
 .edit-mode .seg.k:hover { outline-color: var(--warn); background: rgba(255, 212, 121, .12); }
+/* 正在改读音的那个字：圈实，上面的假名（边输入边变）用同一个颜色 */
+.edit-mode .seg.k.editing { outline: 1.5px solid var(--warn); background: rgba(255, 212, 121, .14); }
+.edit-mode .seg.k.editing rt { color: var(--warn); opacity: 1; }
 .edit-mode .seg.src-roma rt, .edit-mode .seg.src-qq rt { color: var(--vocab); opacity: 1; }
 .edit-mode .seg.src-user rt { color: var(--warn); opacity: 1; }
 .edit-mode .timed .fu { background: none; -webkit-background-clip: border-box; background-clip: border-box; color: inherit; }

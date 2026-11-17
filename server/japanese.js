@@ -392,6 +392,8 @@ function fixMitai(raw) {
 //   接尾的动词（れる / られる / せる / させる）
 //   て 后面的补助动词（いる、しまう、くる、いく、みる、くれる、ください…）和它们的缩约形（てる、ちゃう、とく…）
 //   样态的 そう
+//   口语的 ちゃ / じゃ（行かなくちゃ、行っちゃえ）、ずに 的 に、て 后面的 ほしい、动词后面的 なさい
+//   じゃない 的 じゃ（只在整段都选中时不妨碍还原，不连到前面的词上）
 // 「走り続ける」这种复合动词里的后一个动词不算尾巴——它和前面合起来是另一个词。
 //
 // 另外给出 j：这个词和前一个词是「同一个变形」，记词时点一下就整段选中（走っ+て、走ら+なかっ+た、
@@ -399,33 +401,64 @@ function fixMitai(raw) {
 // 「夢だ」的 だ 不连到 夢 上，て 后面的 も / は 也不连（它们是另外的助词，只是选中时不妨碍还原）。
 const TAIL_PARTICLES = new Set(['て', 'で', 'ば', 'ながら', 'つつ']);
 const TAIL_CONTRACTED = new Set(['てる', 'でる', 'ちゃう', 'じゃう', 'とく', 'どく', 'ちまう', 'じまう']);
+const TAIL_CHAU = new Set(['ちゃう', 'じゃう', 'ちまう', 'じまう']); // 这几个有时被标成独立的动词
 function tailFlags(raw) {
   const out = [];
-  let afterTe = false; // 上一个是不是接续的 て / で
-  let open = false;    // 现在这一段的开头是不是会变形的词（后面的尾巴才连上去）
+  let afterTe = false;  // 上一个是不是接续的 て / で
+  let afterCha = false; // 上一个是不是口语的 ちゃ / じゃ（后面的 う / え / お 是它的词尾：ちゃう、ちゃえ、ちゃお）
+  let open = false;     // 现在这一段的开头是不是会变形的词（后面的尾巴才连上去）
   raw.forEach((t, i) => {
-    const s = t.surface_form, d1 = t.pos_detail_1;
-    let f = false, te = false, loose = false;
+    const s = t.surface_form, d1 = t.pos_detail_1, b = t.basic_form;
+    const prev = raw[i - 1], next = raw[i + 1];
+    const prevRenyo = prev?.pos === '動詞' && /^連用/.test(prev.conjugated_form || '');
+    let f = false, te = false, cha = false, loose = false;
     if (i > 0) {
-      if (t.pos === '助動詞') f = true;
+      if (afterCha && /^[うえお]$/.test(s)) f = true;
+      else if (t.pos === '助動詞') f = true;
       else if (t.pos === '助詞') {
         if (d1 === '接続助詞' && TAIL_PARTICLES.has(s)) { f = true; te = s === 'て' || s === 'で'; }
+        else if (d1 === '接続助詞' && (s === 'ちゃ' || s === 'じゃ') && (prevRenyo || prev.pos === '助動詞')) { f = true; cha = true; }
         else if (d1 === '並立助詞' && (s === 'たり' || s === 'だり')) f = true;
         else if (d1 === '係助詞' && (s === 'も' || s === 'は') && afterTe) { f = true; loose = true; }
+        else if (s === 'に' && prev.pos === '助動詞' && prev.surface_form === 'ず') f = true; // 言わずに
+        else if (s === 'じゃ' && next?.basic_form === 'ない') { f = true; loose = true; }     // 夢じゃない、静かじゃない
       } else if (t.pos === '動詞') {
         if (d1 === '接尾') f = true;
-        else if (d1 === '非自立' && (afterTe || TAIL_CONTRACTED.has(t.basic_form))) { f = true; te = s === 'て' || s === 'で'; }
+        else if (d1 === '非自立' && (afterTe || TAIL_CONTRACTED.has(b) || (b === 'なさる' && prevRenyo))) { f = true; te = s === 'て' || s === 'で'; }
+        else if (TAIL_CHAU.has(b) && prevRenyo) f = true; // 走っ + ちゃう
+      } else if (t.pos === '形容詞') {
+        if (d1 === '非自立' && afterTe && (b === 'ほしい' || b === '欲しい')) f = true; // 走ってほしい
       } else if (t.pos === '名詞' && d1 === '接尾' && t.pos_detail_2 === '助動詞語幹') f = true;
     }
-    // サ变名词后面的 する：不是尾巴（它自己是动词），但和前面的名词是一个单位
-    const prev = raw[i - 1];
-    const suru = !f && t.pos === '動詞' && t.basic_form === 'する' && prev?.pos === '名詞' && prev.pos_detail_1 === 'サ変接続';
+    // サ变名词后面的 する / できる：不是尾巴（它自己是动词），但和前面的名词是一个单位（勉強した、勉強できる）
+    const suru = !f && t.pos === '動詞' && (b === 'する' || b === 'できる') && prev?.pos === '名詞' && prev.pos_detail_1 === 'サ変接続';
     const j = suru || (f && !loose && open);
     out.push({ f, j });
     if (suru) open = true;
     else if (f) open = open && !loose;
     else open = t.pos === '動詞' || t.pos === '形容詞' || (t.pos === '名詞' && d1 === '形容動詞語幹');
     afterTe = te;
+    afterCha = cha;
+  });
+  return out;
+}
+
+// ---------------- 恋して ----------------
+// 分词器会把「恋して / 恋してる」里的「恋し」当成形容词「恋しい」的词干。可形容词的词干后面不会直接跟
+// て / た（那得是 恋しくて、恋しかった），所以这种只能是「名词 + する」：拆成 恋 + し（する）。
+function fixSuru(raw) {
+  const out = [];
+  raw.forEach((t, i) => {
+    const next = raw[i + 1];
+    const stem = t.surface_form.slice(0, -1);
+    const teTa = next && ((next.pos === '助詞' && next.pos_detail_1 === '接続助詞' && next.surface_form === 'て')
+      || (next.pos === '助動詞' && next.basic_form === 'た')
+      || (next.pos === '動詞' && next.pos_detail_1 === '非自立' && TAIL_CONTRACTED.has(next.basic_form)));
+    if (t.pos === '形容詞' && t.conjugated_form === 'ガル接続' && t.surface_form.endsWith('し') && stem && teTa) {
+      const r = (t.reading || '').slice(0, -1);
+      out.push({ ...t, surface_form: stem, basic_form: stem, pos: '名詞', pos_detail_1: 'サ変接続', pos_detail_2: '*', conjugated_type: '*', conjugated_form: '*', reading: r, pronunciation: r });
+      out.push({ surface_form: 'し', basic_form: 'する', pos: '動詞', pos_detail_1: '自立', pos_detail_2: '*', pos_detail_3: '*', conjugated_type: 'サ変・スル', conjugated_form: '連用形', reading: 'シ', pronunciation: 'シ', word_type: 'KNOWN' });
+    } else out.push(t);
   });
   return out;
 }
@@ -442,7 +475,7 @@ export async function analyzeLyrics(lines, opts = {}) {
   return {
     stats,
     lines: lines.map((line) => {
-      const raw = fixMitai(tokenizer.tokenize(line.text));
+      const raw = fixSuru(fixMitai(tokenizer.tokenize(line.text)));
       const tails = tailFlags(raw);
       let i0 = 0;
       const tokens = raw.map((t, ri) => {
