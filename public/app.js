@@ -496,7 +496,19 @@ function jumpToActive() {
   if (prefs.view !== 'apple' || elScroll.classList.contains('free')) return;
   const a = Math.max(S.active, 0);
   const el = elScroll.children[S.active >= 0 ? S.grp?.[a]?.[0] ?? a : a]; // 一组紧凑的句子：对准这一组的第一句，组里换句时不滚动
-  if (el) elScroll.scrollTop = el.offsetTop - elScroll.clientHeight * 0.3;
+  if (!el) return;
+  const H = elScroll.clientHeight;
+  let top = el.offsetTop - H * 0.3;
+  // 一组排得太长（四句，或者标注多）：正在唱的那句连同它的标注快到底了，就整体往上让一让。
+  //   想要的：它的底边在屏幕 78% 以上；同时组里的第一句不顶出屏幕（最高到 6%）
+  //   两头顾不上时：保正在唱的那句完整看得见（底边不过 92%），第一句被顶出去一点也认了
+  const cur = elScroll.children[a];
+  if (cur && cur !== el) {
+    const bottom = cur.offsetTop + cur.offsetHeight;
+    top = Math.max(top, Math.min(bottom - H * 0.78, el.offsetTop - H * 0.06), bottom - H * 0.92);
+    top = Math.min(top, cur.offsetTop - H * 0.3); // 再怎么让，也不超过「只有这一句时」它该在的位置
+  }
+  elScroll.scrollTop = top;
 }
 // 视口上下各多看 pad 像素，返回这一段里的行的下标范围
 function visibleRange(pad) {
