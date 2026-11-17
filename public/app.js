@@ -218,9 +218,12 @@ function setArt(track, cover) {
 //     没有读音的汉字按两个音算。（直接用「时长 ÷ 音数」的话，多音的汉字几乎永远够不到门槛）
 //   - 英文单词：按音节数算，门槛放宽一些
 //   拖得不到 HOLD_MIN 的完全不触发。
-// 二、带着两边一起。和长音在同一个短语里的字（实词 + 后面跟着的助词、词尾）也一起冒：
-//   - 左边的：各自在唱到的时候冒起来（所以是左边先、右边后，像一道波）
-//   - 右边的：紧跟在长音后面唱出来的那一小段尾巴（「云フ」的フ、「忘れない」的ない），同样唱到时冒起来
+// 二、带着两边一起。和长音在同一个短语里（实词 + 后面跟着的词尾）、紧挨着它的字也一起冒：
+//   - 左边的：最多 3 个字，各自在唱到的时候冒起来（所以是左边先、右边后，像一道波）
+//   - 右边的：最多 3 个字，紧跟在长音后面唱出来的那一小段尾巴（「云フ」的フ、「忘れない」的ない）
+//   - 被带的字自己至少要唱 HOLD_SPREAD.min 秒：一闪而过的字冒起来只是抖一下，不好看。
+//     碰到这样的字就到此为止，不跳过它接着往外带——中间空一个不动的字，两边各冒各的，看着是散的
+//   这里的「字」是能冒起来的最小单位：一个假名（连同后面的小写假名），或者一段带注音的汉字。
 //   每个字只在自己被唱着的时候停在上面：下一个字起来时它就很快落下去，所以看上去是一个鼓包从左往右走，
 //   走到长音那里停住，长音唱完再缓缓落下。离长音越远幅度越小。
 // 三、独立的助词不参与。は、が、を、に、で、の、も、から、だけ 这类跟在词后面的助词：自己拖得再长也不冒，
@@ -234,9 +237,9 @@ const HOLD_MIN = 0.8;   // 至少拖这么久才算长音
 const HOLD_FULL = 1.9;  // 拖到这么久效果就到顶了
 const HOLD_LATIN = 1.3; // 英文音节本来就比日语的一个音长，门槛按这个倍数放宽
 const HOLD_CAP = 4;     // 一个音最多按这么久算：再长多半是歌词时间把间奏也算进去了
-const HOLD_SPREAD = { max: 10, within: 2.5, fade: 0.08, floor: 0.6 }; // 往左带几个字、最多隔多久（秒）、每远一个字弱多少、最弱到多少
+const HOLD_SPREAD = { max: 3, within: 1.2, fade: 0.08, floor: 0.6, min: 0.2 }; // 往左带几个字、最多隔多久（秒）、每远一个字弱多少、最弱到多少、被带的字（左右都算）至少唱多久
 const HOLD_NEXT = 0.3; // 唱完后这么久以内紧接着又有字冒起来：这个字要快点落，给后面的让位
-const HOLD_TAIL = { max: 5, within: 0.8 }; // 往右带几个字、最晚在长音唱完后多久（秒）以内开始唱的
+const HOLD_TAIL = { max: 3, within: 0.8 }; // 往右带几个字、最晚在长音唱完后多久（秒）以内开始唱的
 const HOLD_NO_PARTICLE = true; // 独立的助词不参与（见上面第三条）；改成 false 就回到助词也冒的样子
 const SMALL_KANA = /[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/;
 const moraCount = (s) => { let n = 0; for (const c of s) if (/[ぁ-ゖァ-ヺー〜～]/.test(c) && !SMALL_KANA.test(c)) n++; return n; };
@@ -248,20 +251,19 @@ function holdPlan(line) {
   const ct = line.ct;
   if (!ct || !line.tokens) return plan;
   const amp = (dur, m, unit, min) => { const held = dur - (m - 1) * unit; return held >= min ? 0.55 + 0.45 * clamp((held - min) / (HOLD_FULL - HOLD_MIN)) : 0; };
-  // units：这一句里能冒起来的最小单位，从左到右。cs = 它占的字符下标；g = 属于第几个短语；w = 属于第几个词；own = 它自己是不是长音（强度）
+  // units：这一句里能冒起来的最小单位，从左到右。cs = 它占的字符下标；g = 属于第几个短语；own = 它自己是不是长音（强度）
   const units = [];
-  let g = 0, w = 0;
+  let g = 0;
   const push = (cs, m) => {
     const a0 = ct[cs[0]], a1 = ct[cs[cs.length - 1]] || a0;
     const t1 = a0 && Math.min(a1[1], a0[0] + HOLD_CAP);
-    if (a0) units.push({ cs, t0: a0[0], t1, g, w, own: m ? amp(t1 - a0[0], m, HOLD_MORA, HOLD_MIN) : 0, a: 0 });
+    if (a0) units.push({ cs, t0: a0[0], t1, g, own: m ? amp(t1 - a0[0], m, HOLD_MORA, HOLD_MIN) : 0, a: 0 });
   };
   for (const tok of line.tokens) {
     const latin = /^[A-Za-z'’]+$/.test(tok.s);
     const word = /[぀-ヿ㐀-鿿々〆A-Za-z0-9]/.test(tok.s); // 有字，不是空格和标点
     const lone = tok.s.length === 1 && /[ぁ-ヿ]/.test(tok.s); // 孤零零一个假名被分成了「实词」（云フ 的 フ）：多半是前一个词的词尾，不另起短语
     if (!word || latin || (tok.v && !tok.j && !lone)) g++; // 实词开头是新的短语；空格、标点、英文单词把短语断开
-    if (!tok.j) w++;                                       // 词尾（走っ+て+いる 里的后两段）和前面算同一个词
     if (!word) continue;
     if (HOLD_NO_PARTICLE && tok.pos === '助' && !tok.f && !tok.fin) { g++; continue; } // 独立的助词：不冒，并且把短语断开
     if (latin) {
@@ -285,28 +287,13 @@ function holdPlan(line) {
       }
     }
   }
+  const near = (T, n) => T.own * Math.max(HOLD_SPREAD.floor, 1 - HOLD_SPREAD.fade * n);
   units.forEach((T, i) => {
     if (!T.own) return;
-    // 右边的尾巴：同一个短语里、紧跟着唱出来的；同样不把一个词拦腰截断（长音自己所在的词除外）
-    let hi = i;
-    while (hi + 1 < units.length && units[hi + 1].g === T.g && hi - i < HOLD_TAIL.max && units[hi + 1].t0 - T.t1 <= HOLD_TAIL.within) hi++;
-    if (hi + 1 < units.length && units[hi + 1].w === units[hi].w) {
-      const cut = units[hi].w;
-      if (cut === T.w) while (hi + 1 < units.length && units[hi + 1].w === cut) hi++;
-      else while (units[hi].w === cut) hi--;
-    }
-    const near = (n) => T.own * Math.max(HOLD_SPREAD.floor, 1 - HOLD_SPREAD.fade * n);
+    const ok = (u) => u.g === T.g && u.t1 - u.t0 >= HOLD_SPREAD.min; // 同一个短语里的、不是一闪而过的
     T.a = Math.max(T.a, T.own);
-    for (let j = i + 1; j <= hi; j++) units[j].a = Math.max(units[j].a, near(j - i));
-    let lo = i;
-    while (lo > 0 && units[lo - 1].g === T.g && i - lo < HOLD_SPREAD.max && T.t0 - units[lo - 1].t0 <= HOLD_SPREAD.within) lo--;
-    // 不把一个词拦腰截断：截在了词中间，就退到下一个词的开头；长音自己所在的那个词总是整个带上
-    if (lo > 0 && units[lo - 1].w === units[lo].w) {
-      const cut = units[lo].w;
-      if (cut === T.w) while (lo > 0 && units[lo - 1].w === cut) lo--;
-      else while (units[lo].w === cut) lo++;
-    }
-    for (let j = i - 1; j >= lo; j--) units[j].a = Math.max(units[j].a, near(i - j));
+    for (let j = i + 1; j < units.length && j - i <= HOLD_TAIL.max && ok(units[j]) && units[j].t0 - T.t1 <= HOLD_TAIL.within; j++) units[j].a = Math.max(units[j].a, near(T, j - i));
+    for (let j = i - 1; j >= 0 && i - j <= HOLD_SPREAD.max && ok(units[j]) && T.t0 - units[j].t0 <= HOLD_SPREAD.within; j--) units[j].a = Math.max(units[j].a, near(T, i - j));
   });
   units.forEach((u, i) => {
     if (!u.a) return;

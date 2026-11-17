@@ -466,6 +466,33 @@ function fixSuru(raw) {
   return out;
 }
 
+// ---------------- いたんだ ----------------
+// 假名写的「いたんだ」分词器会当成「いたむ」（痛む / 傷む）的过去式：君がいたんだよ → 君 + が + いたん（痛む）+ だ。
+// 可歌词里它几乎都是「いる + た + んだ」（在、一直…着）：真要写「痛んだ」多半会用汉字。
+// 所以假名的 いたん 后面跟着 だ / で / じゃ 时拆成 い（いる）+ た + ん；只有前面明摆着是会疼、会坏的东西
+// （胸がいたんだ、心がいたんで）才留给「痛む」。汉字写的不动。
+const ITAMU_SUBJECT = new Set(['胸', '心', '傷', '頭', '体', '身体', '足', '脚', '腕', '手', '指', '歯', '腹', 'お腹', '目', '耳', '喉', '背中', '腰', '傷口', '古傷', '傷跡', '髪', '肌', 'こころ', 'むね', 'きず', 'からだ']);
+function fixIta(raw) {
+  const out = [];
+  raw.forEach((t, i) => {
+    const next = raw[i + 1], prev = raw[i - 1];
+    const nda = next && ((next.pos === '助動詞' && next.basic_form === 'だ') || (next.pos === '助詞' && /^(で|じゃ)$/.test(next.surface_form)));
+    if (!(t.surface_form === 'いたん' && t.basic_form === 'いたむ' && nda)) {
+      // 上面拆出来的 ん 后面的 だ 是判断的「だ」，不再是「た」的浊音
+      const afterN = out.length && out[out.length - 1].ita && t.pos === '助動詞' && t.basic_form === 'だ';
+      return out.push(afterN ? { ...t, conjugated_type: '特殊・ダ' } : t);
+    }
+    const subj = prev?.pos === '助詞' && /^(が|は|も|の|って)$/.test(prev.surface_form) ? raw[i - 2] : prev;
+    if (subj && subj.pos === '名詞' && ITAMU_SUBJECT.has(subj.surface_form)) return out.push(t);
+    const afterTe = prev?.pos === '助詞' && prev.pos_detail_1 === '接続助詞' && /^(て|で)$/.test(prev.surface_form);
+    const base = { pos_detail_2: '*', pos_detail_3: '*', word_type: 'KNOWN' };
+    out.push({ ...base, surface_form: 'い', basic_form: 'いる', pos: '動詞', pos_detail_1: afterTe ? '非自立' : '自立', conjugated_type: '一段', conjugated_form: '連用形', reading: 'イ', pronunciation: 'イ' });
+    out.push({ ...base, surface_form: 'た', basic_form: 'た', pos: '助動詞', pos_detail_1: '*', conjugated_type: '特殊・タ', conjugated_form: '基本形', reading: 'タ', pronunciation: 'タ' });
+    out.push({ ...base, surface_form: 'ん', basic_form: 'ん', pos: '名詞', pos_detail_1: '非自立', pos_detail_2: '一般', conjugated_type: '*', conjugated_form: '*', reading: 'ン', pronunciation: 'ン', ita: 1 });
+  });
+  return out;
+}
+
 // ---------------- 旧假名 ----------------
 // 有的歌词用旧假名写（想ひ出、言ふ、考へる）：念出来和现代写法一样，可分词器照现代写法才认得，
 // 不处理的话「想ひ出」会被拆成 想（そう）+ ひ + 出，查到不相干的词。
@@ -528,7 +555,7 @@ export async function analyzeLyrics(lines, opts = {}) {
     stats,
     lines: lines.map((line) => {
       const modern = modernSpelling(tokenizer, line.text);
-      const raw = fixSuru(fixMitai(tokenizer.tokenize(modern)));
+      const raw = fixIta(fixSuru(fixMitai(tokenizer.tokenize(modern))));
       const tails = tailFlags(raw);
       let i0 = 0;
       const tokens = raw.map((t, ri) => {
