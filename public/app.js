@@ -1,5 +1,6 @@
 // 唱歌学日语 — 前端
 import { JA_ARTISTS } from './ja-artists.js';
+import { startGuide } from './guide.js';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1950,6 +1951,17 @@ function toast(msg, action) {
   toastTimer = setTimeout(() => { el.hidden = true; }, action ? 7000 : 2600);
 }
 
+// ---------------- 使用指引 ----------------
+// 第一次打开时自动放一遍；看完或跳过就记在偏好里（prefs.guide），以后只在设置里点「再看一遍」才出现。
+// 它只认这一个记号，和词汇书、读音修正这些数据没有关系。
+function showGuide() {
+  $$('.modal, .drawer, .popover').forEach((el) => { el.hidden = true; });
+  $('#btn-menu').classList.remove('on');
+  hideSensePop();
+  startGuide(() => { prefs.guide = 1; savePrefs(); });
+}
+$('#set-guide').addEventListener('click', showGuide);
+
 // ---------------- 启动 ----------------
 applyPrefs();
 updateOffsetLabel();
@@ -1977,5 +1989,10 @@ es.onopen = () => api.get('/api/info').then((i) => {
   bootId = i.boot || bootId;
 }).catch(() => {});
 requestAnimationFrame(frame);
+// 还没看过指引：等界面先出来再放。地址加 ?guide 可以强制放一遍；调试入口（?debug）默认不放，免得挡住测试
+{
+  const q = new URLSearchParams(location.search);
+  if (q.has('guide') || (!prefs.guide && !q.has('debug'))) setTimeout(showGuide, 900);
+}
 // 调试入口：地址加 ?debug 后可在控制台用 __uta.onState(...) 模拟播放状态
 if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs, tick }; }

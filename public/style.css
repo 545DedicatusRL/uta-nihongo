@@ -471,6 +471,39 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
 #tip b { color: var(--fg); font-family: var(--font-ja); }
 #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 60; background: #fff; color: #2a2433; font-weight: 600; padding: 9px 18px; border-radius: 999px; box-shadow: 0 10px 40px rgba(0, 0, 0, .45); max-width: 86vw; text-align: center; }
 
+/* ---------- 使用指引 ---------- */
+/* 整个界面压暗，只在要讲的那个按钮上开一个洞；暗的那层就是洞的阴影，所以洞挪到哪亮到哪 */
+#guide { position: fixed; inset: 0; z-index: 70; --g-ease: cubic-bezier(.3, .75, .2, 1); animation: guide-in .32s ease-out; }
+#guide.out { opacity: 0; pointer-events: none; transition: opacity .22s; }
+@keyframes guide-in { from { opacity: 0; } }
+.g-hole { position: fixed; pointer-events: none; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .8), 0 0 0 5px rgba(255, 255, 255, .14), 0 0 0 200vmax rgba(10, 8, 16, .66);
+  transition: left .5s var(--g-ease), top .5s var(--g-ease), width .5s var(--g-ease), height .5s var(--g-ease), border-radius .5s var(--g-ease), box-shadow .3s; }
+.g-hole.none { box-shadow: 0 0 0 1.5px transparent, 0 0 0 5px transparent, 0 0 0 200vmax rgba(10, 8, 16, .66); }
+.g-card { position: fixed; left: 0; top: 0; width: 344px; max-width: calc(100vw - 24px); padding: 16px 18px 14px; background: #28242f; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 20px 70px rgba(0, 0, 0, .6); transition: transform .5s var(--g-ease); }
+.g-card h2 { margin: 0; font: 650 16px/1.4 var(--font); }
+.g-text { margin: 6px 0 14px; color: var(--fg-2); font-size: 13.5px; line-height: 1.75; }
+.g-text b { color: var(--fg); font-weight: 600; }
+.g-note { margin: -6px 0 14px; color: var(--fg-3); font-size: 12px; line-height: 1.6; }
+.g-icon { display: block; width: 60px; height: 60px; margin: 0 auto 14px; border-radius: 14px; box-shadow: 0 8px 26px rgba(0, 0, 0, .45); }
+.g-card.welcome { width: 408px; padding: 26px 28px 18px; text-align: center; }
+.g-card.welcome h2 { font-size: 20px; }
+.g-card.welcome .g-text { margin: 8px 0 20px; font-size: 14px; text-wrap: balance; }
+/* 指向那个按钮的小尖角：一个转了 45° 的方块，露出来的一角就是箭头 */
+.g-card::before { content: ""; position: absolute; display: none; width: 12px; height: 12px; background: inherit; border: 1px solid var(--line); border-right: 0; border-bottom: 0; }
+.g-card.side-bottom::before { display: block; left: calc(var(--ax) - 6px); top: -7px; transform: rotate(45deg); }
+.g-card.side-top::before { display: block; left: calc(var(--ax) - 6px); bottom: -7px; transform: rotate(225deg); }
+.g-card.side-left::before { display: block; right: -7px; top: calc(var(--ay) - 6px); transform: rotate(135deg); }
+.g-foot { display: flex; align-items: center; gap: 8px; }
+.g-skip { margin-left: -6px; padding: 4px 6px; border-radius: 6px; color: var(--fg-3); font-size: 12.5px; }
+.g-skip:hover { color: var(--fg); }
+.g-dots { flex: 1; display: flex; justify-content: center; gap: 5px; }
+.g-dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--fg-4); transition: width .3s var(--g-ease), background .3s; }
+.g-dots i.on { width: 16px; background: #fff; }
+.g-card button:focus-visible { outline: 2px solid rgba(255, 255, 255, .55); outline-offset: 2px; }
+.g-card .g-next:focus-visible { outline-color: rgba(255, 255, 255, .28); } /* 焦点一开始就在它上面，圈淡一点 */
+#guide.still .g-hole, #guide.still .g-card { transition: none; }
+@media (prefers-reduced-motion: reduce) { #guide, .g-hole, .g-card, .g-dots i { animation: none; transition: none; } }
+
 /* ---------- 窄窗口 ---------- */
 @media (max-width: 760px) {
   .view-apple #stage { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
