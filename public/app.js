@@ -684,6 +684,7 @@ document.addEventListener('mouseover', (e) => {
 });
 
 // ---------------- 点击歌词：跳转 / 敲击对齐 / 辞书选择 / 改读音 ----------------
+let popClosedAt = -1e9; // 上一次因为点到外面而关掉读音小窗的时刻
 function seekTo(sec) {
   sec = Math.max(0, sec);
   setClock(sec);
@@ -695,7 +696,9 @@ document.addEventListener('click', (e) => {
   const inFocus = e.target.closest('#f-cur');
   // 记词模式：点在词上是选词；点在这一行的其他地方（空白、翻译）和平时一样，跳到这一句
   if (S.mode === 'dict' && (inFocus || (lineEl && e.target.closest('.tok, .chip')))) return dictClick(e);
-  if (S.mode === 'edit' && (lineEl || inFocus || e.target.closest('#f-ann'))) return editClick(e);
+  // 修改模式同理：点在词或标注上是修改；点在这一行的其他地方跳到这一句
+  if (S.mode === 'edit' && (inFocus || e.target.closest('#f-ann') || (lineEl && e.target.closest('.tok, .chip')))) return editClick(e);
+  if (performance.now() - popClosedAt < 400) return; // 这一下是为了关掉读音小窗，不算点歌词
   const near = e.target.closest('#f-prev, #f-next'); // 大字视图里的上一句 / 下一句
   const i = lineEl ? +lineEl.dataset.i : near && near.dataset.i !== '' ? +near.dataset.i : -1;
   const line = S.lines[i];
@@ -776,6 +779,13 @@ function dictClick(e) {
     else if (u1 === s.b) s.b = u0;
     else S.sel = { li, a: u0, b: u1 };
   } else { s.a = Math.min(s.a, u0); s.b = Math.max(s.b, u1); }
+  // 两端不留空格：空格不是词，自己点不掉，留在选区边上就成了去不掉的一块
+  if (S.sel) {
+    const t = S.sel;
+    while (t.a < t.b && /\s/.test(line.text[t.a])) t.a++;
+    while (t.b > t.a && /\s/.test(line.text[t.b - 1])) t.b--;
+    if (t.a >= t.b) S.sel = null;
+  }
   // 再点一次把选中的词取消掉：如果是选词时自动暂停的，接着放
   if (!S.sel) resumeIfPausedByDict();
   else if (prefs.dictPause && S.player?.state === 'playing') { S.pausedByDict = true; control('pause'); }
@@ -807,6 +817,26 @@ function paintSelection() {
   if (!s) return;
   $$(`.jp[data-li="${s.li}"] .ch`).forEach((el) => { const c = +el.dataset.c; if (c >= s.a && c < s.b) el.classList.add('sel'); });
 }
+// 一个词在歌词里的读音（汉字用标注的假名，其余转成平假名）
+function tokReading(tok) {
+  return tok.segs.map((seg) => (seg.r !== undefined && KANJI.test(seg.t) ? seg.r : toHira(seg.t))).join('');
+}
+// 一个词还原成原形以后怎么读：歌词里的读音去掉变形的那截假名，换上原形的那截
+//   許せ（ゆるせ）→ 許せる（ゆるせる）、走っ（はしっ）→ 走る（はしる）、良かっ → 良い
+// 推不出来（变的不是假名）就返回空，读音留给词典或用户自己填。
+function baseReading(tok) {
+  if (!tok.b || tok.b === tok.s) return tokReading(tok);
+  if (tok.b === '来る') return 'くる'; // 来（き / こ）→ 来る：变的是汉字自己的读音
+  let p = 0;
+  while (p < tok.s.length && tok.s[p] === tok.b[p]) p++;
+  const cut = toHira(tok.s.slice(p)), add = toHira(tok.b.slice(p)), r = tokReading(tok);
+  if (KANJI.test(cut + add) || !r.endsWith(cut)) return '';
+  return r.slice(0, r.length - cut.length) + add;
+}
+// 歌词里隔开短句的空格不记进词里（要空格自己加）；英文单词之间的空格留着
+function squash(text) {
+  return text.replace(/\s+/g, (m, i, all) => (/[A-Za-z0-9'’.,!?]$/.test(all.slice(0, i)) && /^[A-Za-z0-9]/.test(all.slice(i + m.length)) ? ' ' : ''));
+}
 function selectionInfo() {
   const s = S.sel;
   const line = S.lines[s.li];
@@ -824,16 +854,24 @@ function selectionInfo() {
       else reading += toHira(seg.t.slice(Math.max(s.a, s0) - s0, Math.min(s.b, s1) - s0));
     }
   }
-  const text = line.text.slice(s.a, s.b);
-  return { line, text, reading, ...dictForm(toks, s, text) };
+  const raw = line.text.slice(s.a, s.b);
+  const form = dictForm(toks, s, raw);
+  // 原形的读音：前面照原样的词 + 还原的那个词的原形读音
+  let baseR = reading;
+  if (form.base !== raw) {
+    const tail = form.stem ? baseReading(form.stem) : '';
+    baseR = form.stem && !tail ? '' : toks.slice(0, form.cut).map(tokReading).join('') + tail;
+  }
+  return { line, text: squash(raw), reading: squash(reading), base: squash(form.base), head: form.head, baseReading: squash(baseR) };
 }
 // 选中的这一段该记成什么：
 //   走って / 走らなかった / 走っている → 走る（词干后面跟着的都是变形的尾巴，见服务端的 tailFlags）
 //   走り続けた → 走り続ける（最后一个不是尾巴的词还原成原形，前面的照原样）
 //   勉強した → 勉強（する 前面是名词：词典里收的是名词）
-// 返回 { base: 原形, head: 原形完全来自这一个词时是它（查词典时带上它的读音） }；没选在词的边界上就不还原。
+// 返回 { base: 原形, head: 原形完全来自这一个词时是它（查词典时带上它的读音）,
+//         cut: 前面照原样的词有几个, stem: 还原成原形的那个词（没有就是空） }；没选在词的边界上就不还原。
 function dictForm(toks, s, text) {
-  const none = { base: text, head: null };
+  const none = { base: text, head: null, cut: 0, stem: null };
   if (!toks.length || toks[0].i0 !== s.a) return none;
   const lastTok = toks[toks.length - 1];
   if (lastTok.i0 + lastTok.s.length !== s.b) return none;
@@ -842,8 +880,8 @@ function dictForm(toks, s, text) {
   const stem = toks[k];
   if (toks.length > 1 && stem.f) return none; // 选中的全是尾巴
   const before = toks.slice(0, k).map((t) => t.s).join('');
-  if (stem.b === 'する' && k > 0 && toks[k - 1].pos === '名') return { base: before, head: k === 1 ? toks[0] : null };
-  return { base: before + stem.b, head: k === 0 ? stem : null };
+  if (stem.b === 'する' && k > 0 && toks[k - 1].pos === '名') return { base: before, head: k === 1 ? toks[0] : null, cut: k, stem: null };
+  return { base: before + stem.b, head: k === 0 ? stem : null, cut: k, stem };
 }
 let dictSeq = 0;
 let dictHit = null; // 底栏里现在这个词查到的词条（加入词汇书时取它的级别）
@@ -861,7 +899,7 @@ function updateDictBar(fresh) {
   // 原形来自一个带汉字的词：连同歌词里实际唱的读音一起查（辛い 是 からい 还是 つらい）
   const key = useBase && info.head?.h && info.head.b === word ? dictKey(info.head) : word;
   if (!w.dataset.dirty) w.value = word;
-  if (!r.dataset.dirty) r.value = useBase ? '' : info.reading;
+  if (!r.dataset.dirty) r.value = useBase ? info.baseReading : info.reading; // 记原形就填原形的读音，记歌词里的形式就填歌词里的
   if (!m.dataset.dirty) m.value = '';
   const ai = info.line.ai?.vocab.find((v) => v.b === word || v.text === info.text);
   if (ai && !m.dataset.dirty) m.value = ai.zh;
@@ -875,17 +913,30 @@ function updateDictBar(fresh) {
     if (seq !== dictSeq) return;
     if (d && !d.miss) dictHit = { word, d };
     if (!d || d.miss) {
-      if (useBase && !r.dataset.dirty && !r.value) r.value = info.reading;
       $('#db-info').innerHTML = `词典里没有查到「${esc(word)}」，可以自己填写释义。${swap}`;
       return;
     }
-    if (!r.dataset.dirty && (useBase || !r.value) && d.r) r.value = d.r;
+    if (!r.dataset.dirty && !r.value && d.r) r.value = d.r; // 自己推不出读音时才用词典的
     const picked = chooseMeaning(d, info.line, `v:${word}`);
     if (!m.dataset.dirty && !m.value) m.value = picked.text;
-    const allZh = (d.zhs?.length ? d.zhs : [d.zh]).filter(Boolean).join(' ｜ ');
-    const detail = [allZh, prefs.meaningLang !== 'zh' || !allZh ? (d.en || []).join('; ') : ''].filter(Boolean).join('　');
-    $('#db-info').innerHTML = `${d.lv ? `<span class="lv">${d.lv}</span>` : ''}${esc(d.w)}【${esc(d.r)}】 ${esc(detail)}${swap}`;
+    // 有好几个义项：每个都能点，点哪个「释义」就填哪个
+    const lang = prefs.meaningLang;
+    const zhs = (d.zhs?.length ? d.zhs : [d.zh]).filter(Boolean), ens = d.en || [];
+    const pickable = (list, val) => (list.length > 1
+      ? list.map((x) => `<button class="db-sense" data-val="${esc(val(x))}" title="用这个意思">${esc(x)}</button>`).join('')
+      : esc(list.join('')));
+    const zhHTML = pickable(zhs, (x) => (lang === 'both' ? [x, ens[0]].filter(Boolean).join(' / ') : x));
+    const showEn = lang !== 'zh' || !zhs.length;
+    const enHTML = !showEn ? '' : lang === 'en' ? pickable(ens, (x) => x) : esc(ens.join('; '));
+    const detail = [lang === 'en' ? esc(zhs.join(' ｜ ')) : zhHTML, enHTML].filter(Boolean).join('　');
+    $('#db-info').innerHTML = `${d.lv ? `<span class="lv">${d.lv}</span>` : ''}${esc(d.w)}【${esc(d.r)}】 ${detail}${swap}`;
+    markSense();
   });
+}
+// 「释义」里现在填的是哪个义项，就把哪个标亮
+function markSense() {
+  const v = $('#db-meaning').value;
+  for (const b of $$('#db-info .db-sense')) b.classList.toggle('on', b.dataset.val === v);
 }
 async function lookup(word) {
   if (S.dict[word]) return S.dict[word];
@@ -893,7 +944,10 @@ async function lookup(word) {
   return S.dict[word] || { miss: 1 };
 }
 for (const id of ['db-word', 'db-reading', 'db-meaning']) $(`#${id}`).addEventListener('input', (e) => { e.target.dataset.dirty = '1'; });
+$('#db-meaning').addEventListener('input', markSense);
 $('#db-info').addEventListener('click', (e) => {
+  const sense = e.target.closest('.db-sense');
+  if (sense) { const m = $('#db-meaning'); m.value = sense.dataset.val; m.dataset.dirty = '1'; return markSense(); }
   const a = e.target.closest('a[data-form]');
   if (!a || !S.sel) return;
   S.sel.form = a.dataset.form;
@@ -1353,7 +1407,8 @@ async function setMark(artist, ja, undo = true) {
 // 设置里的名单：看得到标过谁，可以逐个去掉或全部清除
 function renderMarks() {
   const list = Object.values(lib.marks).sort((a, b) => b.at - a.at);
-  $('#set-marks-info').textContent = list.length ? `手动标为日文歌手的有 ${list.length} 位，点 × 取消` : '还没有。「仅日文」漏掉的歌：取消勾选后把鼠标移到那首歌上，点右边的「日」。';
+  for (const el of $$('.set-lib')) el.hidden = !list.length; // 一个都没标过：设置里不出现这一节
+  $('#set-marks-info').textContent = `手动标为日文歌手的有 ${list.length} 位，点 × 取消`;
   $('#set-marks-clear').hidden = !list.length;
   $('#set-marks').innerHTML = list.map((m) => `<span class="mark-chip"><b>${esc(m.name)}</b><button data-artist="${esc(m.name)}" aria-label="取消标记" title="取消标记">×</button></span>`).join('');
 }
@@ -1394,7 +1449,8 @@ $('#lib-search').addEventListener('input', () => renderLibrary());
 // 默认只看日文歌；取消勾选后会记住
 $('#lib-ja').checked = prefs.libJa !== false;
 $('#lib-ja').addEventListener('change', (e) => { prefs.libJa = e.target.checked; savePrefs(); renderLibrary(); });
-$('#lib-recent').addEventListener('change', () => renderLibrary());
+$('#lib-recent').checked = !!prefs.libRecent;
+$('#lib-recent').addEventListener('change', (e) => { prefs.libRecent = e.target.checked; savePrefs(); renderLibrary(); });
 $('#lib-playlist').addEventListener('change', async (e) => {
   const v = e.target.value;
   closeAlbum(false);
@@ -1819,7 +1875,7 @@ document.addEventListener('mousedown', (e) => {
   // 敲击对齐开着时，点歌词是在对齐，不算「点到面板外面」，面板留着方便多敲几次
   if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset') && !(S.tapAlign && e.target.closest('#lyrics, #focus'))) $('#offset-pop').hidden = true;
   if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) toggleMenu(false);
-  if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) $('#reading-pop').hidden = true;
+  if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) { $('#reading-pop').hidden = true; popClosedAt = performance.now(); }
   for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) $(`#${id}`).hidden = true;
 });
 

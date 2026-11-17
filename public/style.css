@@ -237,14 +237,19 @@ ruby { ruby-align: center; }
 .db-form input { background: rgba(255, 255, 255, .09); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 15px; color: var(--fg); min-width: 0; width: 100%; }
 #db-word { font: 600 18px var(--font-ja); width: 9em; }
 #db-reading { font-family: var(--font-ja); width: 9em; }
-.db-info { color: var(--fg-2); font-size: 12.5px; min-height: 18px; }
+.db-info { color: var(--fg-2); font-size: 12.5px; min-height: 24px; line-height: 24px; }
+/* 多个义项：每个是一颗能点的小药丸，「释义」里填的那个标亮 */
+.db-sense { margin-right: 5px; padding: 0 9px; line-height: 20px; border-radius: 999px; border: 1px solid var(--line); color: var(--fg-2); font-size: 12.5px; transition: background .15s, border-color .15s, color .15s; }
+.db-sense:hover { background: rgba(255, 255, 255, .12); color: var(--fg); }
+.db-sense.on { background: rgba(155, 231, 207, .16); border-color: var(--vocab); color: var(--fg); }
 .db-info .lv { font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 4px; background: var(--vocab); color: #231d2e; margin-right: 6px; }
 .db-info a { color: var(--vocab); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .db-opts { display: flex; gap: 16px; color: var(--fg-3); font-size: 12px; }
 .view-focus.dict-mode #player { display: none; }
 
 /* ---------- 读音编辑 ---------- */
-.edit-mode .line { cursor: default; }
+.edit-mode .line { cursor: pointer; } /* 点词和标注是修改，点这一行的其他地方跳到这一句 */
+.edit-mode .line.gap, .edit-mode .tok { cursor: default; }
 .edit-mode .seg.k { outline: 1px dashed var(--fg-4); outline-offset: 1px; border-radius: 4px; cursor: text; }
 .edit-mode .seg.k:hover { outline-color: var(--warn); background: rgba(255, 212, 121, .12); }
 .edit-mode .seg.src-roma rt, .edit-mode .seg.src-qq rt { color: var(--vocab); opacity: 1; }
