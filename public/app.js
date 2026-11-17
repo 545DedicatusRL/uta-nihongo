@@ -1457,6 +1457,8 @@ function renderLibrary(keep) {
     if (recent) list = [...list].sort((a, b) => b.added - a.added);
   }
   $('#lib-album').hidden = !lib.album;
+  box.classList.toggle('ja-only', ja);
+  setNear(null);
   lib.filtered = list;
   lib.shown = 0;
   coverIO.disconnect();
@@ -1542,6 +1544,22 @@ $('#set-marks-clear').addEventListener('click', async () => {
   toast('已清除全部手动标记', { label: '撤销', run: () => replaceMarks(prev).then(() => toast('已撤销')) });
 });
 
+// 「仅日文」时列表里只剩手动标过的歌还带着「日」，一直亮着太抢眼：
+// 平时收起来，鼠标移到这一行右端（图标那一带）才出现
+let nearRow = null;
+function setNear(row) {
+  if (row === nearRow) return;
+  nearRow?.classList.remove('near');
+  nearRow = row;
+  row?.classList.add('near');
+}
+$('#lib-list').addEventListener('mousemove', (e) => {
+  const row = e.target.closest?.('.track');
+  const btn = row?.querySelector('.ja-btn');
+  setNear(btn && e.clientX >= btn.getBoundingClientRect().left - 28 ? row : null);
+});
+$('#lib-list').addEventListener('mouseleave', () => setNear(null));
+$('#lib-list').addEventListener('scroll', () => setNear(null), { passive: true }); // 滚动时鼠标底下换了一行
 $('#lib-list').addEventListener('scroll', (e) => { const el = e.target; if (el.scrollTop + el.clientHeight > el.scrollHeight - 400 && lib.shown < lib.filtered.length) moreLibrary(); });
 $('#lib-list').addEventListener('click', (e) => {
   const al = e.target.closest('.album');

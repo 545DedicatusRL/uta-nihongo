@@ -361,6 +361,9 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
 .track:hover .ja-btn, .ja-btn:focus-visible, .ja-btn.manual { opacity: 1; }
 .ja-btn:hover { scale: 1.12; color: var(--fg); border-color: rgba(255, 255, 255, .6); }
 .ja-btn.manual { background: #fff; border-color: transparent; color: #2a2433; }
+/* 仅日文：手动标过的「日」平时不显示，鼠标移到行右端才出现 */
+#lib-list.ja-only .ja-btn { opacity: 0; }
+#lib-list.ja-only .track.near .ja-btn, #lib-list.ja-only .ja-btn:focus-visible { opacity: 1; }
 /* 全部专辑：封面 + 专辑名 + 歌手和曲目数 */
 .album { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 1px 12px; align-items: center; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
 .album:hover { background: rgba(255, 255, 255, .08); }
