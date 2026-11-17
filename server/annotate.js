@@ -97,6 +97,39 @@ async function chineseByReading(forms, readings, lists, allowBare) {
   return null; // 对不上读音的一律不用：宁可只显示英文释义，也不显示别的词的中文释义
 }
 
+// 假名词的同音词条 m（個々）的中文释义：先在「按假名查到的那些词条」里找写法对得上的，找不到再按它的汉字写法去查
+async function chineseOfHomophone(word, m, lists) {
+  const forms = [m.w, ...(m.alts || [])];
+  const list = await lists(word);
+  // 写法按常用程度一个一个试（慣れる 排在 馴れる 前面），不能谁先出现用谁
+  for (const f of forms) { const hit = list.find((x) => x.entry === f || x.forms.includes(f)); if (hit) return hit; }
+  // 假名词头的词条里注明了「汉字：…」：只注了这一个写法的才算数（かみ 那条把 上 / 長官 / 神 的释义都堆在一起）
+  const noted = list.find((x) => x.kanji.length === 1 && x.kanji[0] === m.w);
+  return noted || chineseByReading(forms, [m.r], lists, false);
+}
+
+// 按假名查到的「假名词头」那一条（はし、いる、わたし）能不能当作 kanjiForm 这个词的释义。它没写是哪个汉字，
+// 多数时候就是最常用的那个词（いる → 在、わたし → 我），但也可能是另一个同音词的（はし 那条讲的是「端」）。不用它的情况：
+//   - 它自己注明了汉字写法，里面却没有我们要的这个（かみ 那条注的是 上 / 長官 / 神，没有 紙）
+//   - 它的释义和同一批结果里某个同音词条的释义明显是一回事（はし 那条和「端」那条都是「头、端、边」）
+// 另外，这一条常把几个同音词的义项堆在一起（つま：头绪 / 前衣襟 / 妻子 / 山墙）：里面有带着这个词的汉字的义项（妻子）就把它提到最前面。
+const hanOf = (x) => new Set([...x.zhs.slice(0, 2).join('').replace(/（[^）]*）|\([^)]*\)/g, '')].filter((ch) => /[\u4e00-\u9fff]/.test(ch)));
+function kanaEntryFor(list, word, kanjiForm) {
+  const mine = list.find((x) => x.entry === word);
+  if (!mine || (mine.kanji.length && !mine.kanji.includes(kanjiForm))) return null;
+  const own = [...kanjiForm].filter((ch) => hasKanji(ch));
+  const hits = mine.zhs.filter((x) => own.some((ch) => x.includes(ch)));
+  if (hits.length) return { ...mine, zh: hits.slice(0, 2).join('；'), zhs: [...hits, ...mine.zhs.filter((x) => !hits.includes(x))] };
+  const a = hanOf(mine);
+  for (const x of list) {
+    if (x === mine || normR(x.r) !== normR(word)) continue;
+    const b = hanOf(x);
+    const both = [...b].filter((ch) => a.has(ch)).length;
+    if (both && both / Math.min(a.size, b.size) >= 0.5) return null;
+  }
+  return mine;
+}
+
 // 两个词典都是免费的公开接口，问得太急会被限流（HTTP 429）：每个接口的请求之间留一点间隔，
 // 被限流了就等一等再试，还不行才放弃（这个词下次再查）
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -119,8 +152,22 @@ async function jisho(word) {
   const j = await res.json();
   const data = j.data || [];
   const exact = data.filter((d) => d.japanese.some((x) => x.word === word || (!x.word && x.reading === word) || x.reading === word));
-  const pick = exact.find((d) => d.japanese[0].word === word || d.japanese[0].reading === word) || exact[0] || null;
+  const head = (d) => d.japanese[0].word === word || d.japanese[0].reading === word;
+  let pick = exact.find(head) || exact[0] || null;
   if (!pick) return { miss: 1 };
+  // 假名写的词同音词多，Jisho 排第一的不一定是歌词里这个（ここ：排第一的是「個々」N1，其实是「此処」N5）。
+  // 排第一的那条平时是写汉字的话，在常用的同音词里换一条更合适的：
+  //   - 「通常只写假名」的那条，只要不比原来那条难（くも：「蜘蛛」虽然通常写假名，但「雲」更基础，不换）
+  //   - 没有的话，明显更基础的那条（いま：排第一的是「居間」N3，换成「今」N5）
+  const kana = !hasKanji(word);
+  const basic = (d) => Math.max(0, ...(d.jlpt || []).map((x) => Number(x.replace(/\D/g, '')) || 0)); // N5 = 5 最基础，没有级别 = 0
+  const kanaWord = (d) => !d.japanese[0].word || d.senses.slice(0, 2).some((x) => (x.tags || []).includes('Usually written using kana alone'));
+  if (kana && !kanaWord(pick)) {
+    const cands = exact.filter((d) => d !== pick && head(d) && d.is_common);
+    const alt = cands.find((d) => kanaWord(d) && basic(d) >= Math.max(basic(pick), 1))
+      || cands.filter((d) => basic(d) > basic(pick)).sort((x, y) => basic(y) - basic(x))[0];
+    if (alt) pick = alt;
+  }
   const entry = (d) => {
     const jp = d.japanese.find((x) => x.word === word) || d.japanese[0];
     const levels = (d.jlpt || []).map((s) => Number(s.replace(/\D/g, ''))).filter(Boolean);
@@ -153,12 +200,28 @@ async function jisho(word) {
       if (more.length >= 3) break;
     }
     if (more.length) out.more = more;
+  } else {
+    // 假名写的词：同音的其他词条（ここ：個々、はし：橋 / 箸 / 端）也留着，界面上可以改选；只留常用的或有级别的
+    out.kv = KV;
+    const seen = new Set([out.w]);
+    const more = [];
+    for (const d of exact) {
+      // 要是「主要读音就是这个假名」的词条（九 也能读 ここ、嘴 也能读 はし，那种不算）；没有汉字写法的分不出谁是谁，也不要
+      if (d === pick || !(d.is_common || (d.jlpt || []).length) || !head(d)) continue;
+      const m = entry(d);
+      if (!m.w || m.w === word || seen.has(m.w)) continue;
+      seen.add(m.w);
+      more.push(m);
+      if (more.length >= 3) break;
+    }
+    if (more.length) out.more = more;
   }
   return out;
 }
 
 // ---- 按读音选词条 ----
 const CV = 3; // 缓存里带了这个标记的条目，才保证已经把「其他读音的词条」一起存下来了
+const KV = 1; // 假名写的词：带了这个标记的条目，才是按「通常只写假名」挑过、并且存了同音词条的
 // 词条的读音和提示对不对得上：2 = 完全一样，1 = 以它开头（提示只有词干那一段），0 = 对不上
 const fitRank = (r, h) => { const x = toHira(r); return !x || !h ? 0 : x === h ? 2 : x.startsWith(h) ? 1 : 0; };
 function select(e, h) {
@@ -176,13 +239,16 @@ function select(e, h) {
 }
 // 这条缓存要不要重新查：没有中文释义那一步的旧缓存；或者是带着读音提示来查、缓存却还是旧格式
 // （旧格式只存了一个词条，同一个写法的其他读音没存下来）。每个词只会重查这一次。
-const stale = (e, h) => e.zhs === undefined || (!!h && e.cv !== CV && !e.miss);
+// 假名写的词还要看 KV（见上）。
+const stale = (e, h, w) => e.zhs === undefined || (!e.miss && ((!!h && e.cv !== CV) || (!!w && !hasKanji(w) && e.kv !== KV)));
 
 // 人称代词在词典里排在前面的是同形的另一个义项（僕＝仆人、君＝君主）；那些义项本身没错，
 // 但歌词里几乎总是代词，所以这里直接给出代词义
 const ZH_FIX = {
   僕: '我（男性自称）', ぼく: '我（男性自称）', ボク: '我（男性自称）',
-  君: '你（对平辈或晚辈）', 俺: '我（男性自称，较随意）',
+  君: '你（对平辈或晚辈）', きみ: '你（对平辈或晚辈）', キミ: '你（对平辈或晚辈）', 俺: '我（男性自称，较随意）',
+  // 指示词：词典里是一大段语法说明（「近称指示代名词；指说话人现在所在的地方」）
+  ここ: '这里，这儿', そこ: '那里，那儿', あそこ: '那边，那儿', どこ: '哪里，哪儿',
 };
 const withFix = (w, e) => (ZH_FIX[w] && e && !e.miss ? { ...e, zh: ZH_FIX[w], zhs: [ZH_FIX[w]] } : e);
 
@@ -215,7 +281,7 @@ export async function lookupWords(words, onlyCached = false) {
   const todo = new Map(); // 词 → 要不要连 Jisho 也重新查
   for (const { w, h } of keys) {
     const e = c[w];
-    if (e && !stale(e, h)) continue;
+    if (e && !stale(e, h, w)) continue;
     if (!onlyCached) todo.set(w, todo.get(w) || !e || e.zhs !== undefined);
   }
   const fill = async (list) => {
@@ -231,14 +297,19 @@ export async function lookupWords(words, onlyCached = false) {
           const forms = [w, ...(e.alts || [])];
           let zh = null;
           if (hasKanji(w) && !e.miss && e.r) zh = await chineseByReading(forms, [e.r, ...(e.rs || [])], listFor, true);
-          else for (const f of forms) { zh = pickYoudao(await listFor(f), f, e.w !== w ? e.w : undefined); if (zh) break; }
+          else if (e.kv && !e.miss && e.w && hasKanji(e.w)) {
+            // 假名词、选中的词条有汉字写法（はし → 橋）：按那个写法找中文释义。找不到时才用按假名查到的那一条，
+            // 而且要看着不像是别的同音词的释义（见 kanaEntryFor），不然宁可只显示英文
+            zh = await chineseOfHomophone(w, e, listFor) || kanaEntryFor(await listFor(w), w, e.w);
+          } else for (const f of forms) { zh = pickYoudao(await listFor(f), f, e.w !== w ? e.w : undefined); if (zh) break; }
           if (zh) {
             e.zh = zh.zh;
             e.zhs = zh.zhs;
             if (e.miss) { delete e.miss; e.w = w; e.r = zh.r; e.lv = ''; e.en = []; }
           } else { e.zh = ''; e.zhs = []; }
           for (const m of e.more || []) {
-            const hit = await chineseByReading([w], [m.r, ...(m.rs || [])], listFor, false);
+            // 汉字词的其他读音：还是查这个写法，按读音对；假名词的同音词条：按那一条的汉字写法找
+            const hit = e.kv ? await chineseOfHomophone(w, m, listFor) : await chineseByReading([w], [m.r, ...(m.rs || [])], listFor, false);
             m.zh = hit ? hit.zh : '';
             m.zhs = hit ? hit.zhs : [];
           }
@@ -261,15 +332,18 @@ export async function lookupWords(words, onlyCached = false) {
     dv.h = hintFor(h, dv.cut);
     via.set(key, dv);
     const e2 = c[dv.w];
-    if (!onlyCached && (!e2 || stale(e2, dv.h))) more.set(dv.w, more.get(dv.w) || !e2 || e2.zhs !== undefined);
+    if (!onlyCached && (!e2 || stale(e2, dv.h, dv.w))) more.set(dv.w, more.get(dv.w) || !e2 || e2.zhs !== undefined);
   }
   if (more.size) await fill([...more]);
   for (const { key, w, h } of keys) {
     const e = c[w];
     if (!e) continue;
-    const old = stale(e, h);
+    const old = stale(e, h, w);
     if (old && !onlyCached && e.zhs === undefined) continue; // 这次没查成：不给半截的结果
     out[key] = withFix(w, select(e, h));
+    // 假名词的同音词条：一起给界面，改选义项时能选到（各带各的写法和级别）
+    const homs = e.kv ? (e.more || []).filter((m) => m.zh || m.en?.length).map((m) => ({ w: m.w, r: m.r, lv: m.lv, zh: m.zh || '', zhs: m.zhs || [], en: m.en || [] })) : [];
+    if (homs.length) out[key] = { ...out[key], homs };
     if (old && onlyCached) out[key] = { ...out[key], stale: 1 };
     const dv = via.get(key);
     if (!dv) continue;

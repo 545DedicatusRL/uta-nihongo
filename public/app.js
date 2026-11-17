@@ -5,6 +5,10 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+// 输入法正在选字时按下的回车是「确认候选」，不是「提交」。不分开的话，用日文输入法填读音，
+// 第一下回车就把小窗关了，输入法手里还没交出去的字会落进下一个得到光标的输入框（比如搜索框）。
+// Chrome 用 isComposing，Safari 在确认的那一下只给 keyCode 229，两个都要看。
+const composing = (e) => e.isComposing || e.keyCode === 229;
 const fmt = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const KANJI = /[㐀-䶿一-鿿々〆]/;
 const toHira = (s) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
@@ -646,7 +650,11 @@ function frame() {
 //   3. 单汉字词里，有一个小词条正好就是这个汉字的（落ちる →「落」）。只限单汉字词且完全相等，
 //      避免被「勉強＝勉强」这类中日同形异义的义项带偏
 //   4. 词典默认（前两个义项）
-// 返回 { text 显示用, senses 全部中文义项, zh 选中的中文义项, how: 'manual' | 'context' | 'kanji' | '' }
+// 假名写的词（ここ、なく）在词典里常有几个同音的词条（此処 / 個々、鳴く / 泣く）：它们的义项也列进可选项里，
+// 各带各的写法和级别。自动只在很有把握时才换过去——本来那个词条的义项一个都对不上翻译，同音词条却有一个
+// 两个字以上的小词条整个出现在翻译里。
+// 返回 { text 显示用, senses 全部可选的中文义项, zh 选中的中文义项, how: 'manual' | 'context' | 'kanji' | '',
+//        hom 选中的义项属于哪个同音词条（是本来那条就为 null）, of: Map 义项 → 同音词条 }
 const STOPCH = new Set([...'的了是在我你他她它们和与就也都不有这那个着过吧吗呢啊把被让给很还又而及或但其之所以为于']);
 const HAN = /[\u4e00-\u9fff]/;
 const hanzi = (str) => [...str].filter((c) => HAN.test(c) && !STOPCH.has(c));
@@ -666,9 +674,11 @@ function senseScore(sense, zhLine, ctx) {
   return max + sum * 0.01;
 }
 function chooseMeaning(d, line, key) {
-  if (!d) return { text: '', senses: [], zh: '', how: '' };
-  const en = d.en?.[0] || '';
-  const senses = d.zhs?.length ? d.zhs : d.zh ? [d.zh] : [];
+  if (!d) return { text: '', senses: [], zh: '', how: '', hom: null, of: new Map() };
+  const own = d.zhs?.length ? d.zhs : d.zh ? [d.zh] : [];
+  const of = new Map();
+  for (const h of d.homs || []) for (const x of (h.zhs?.length ? h.zhs : h.zh ? [h.zh] : []).slice(0, 2)) if (!own.includes(x) && !of.has(x)) of.set(x, h);
+  const senses = [...own, ...of.keys()];
   let zh = d.zh || '', how = '';
   const manual = key && S.senses?.[key];
   if (manual && senses.includes(manual)) { zh = manual; how = 'manual'; }
@@ -676,25 +686,57 @@ function chooseMeaning(d, line, key) {
     if (line?.zh) {
       const ctx = new Set(hanzi(line.zh));
       let best = 0.49; // 至少要有半个小词条对得上
-      for (const sense of senses) {
+      for (const sense of own) {
         const sc = senseScore(sense, line.zh, ctx);
         if (sc > best) { best = sc; zh = sense; how = 'context'; }
+      }
+      if (!how) {
+        best = 1.99;
+        for (const sense of of.keys()) {
+          const sc = senseScore(sense, line.zh, ctx);
+          if (sc > best) { best = sc; zh = sense; how = 'context'; }
+        }
       }
     }
     if (!how) {
       const kanji = [...(d.w || '')].filter((c) => HAN.test(c));
-      const own = kanji.length === 1 && senses.find((sense) => glosses(sense).includes(kanji[0]));
-      if (own) { zh = own; how = 'kanji'; }
+      const self = kanji.length === 1 && own.find((sense) => glosses(sense).includes(kanji[0]));
+      if (self) { zh = self; how = 'kanji'; }
     }
   }
+  const hom = of.get(zh) || null;
+  const en = (hom || d).en?.[0] || '';
   const lang = prefs.meaningLang;
   const text = lang === 'en' ? (en || zh) : lang === 'both' ? [zh, en].filter(Boolean).join(' / ') : (zh || en);
-  return { text, senses: lang === 'en' ? [] : senses, zh, how };
+  return { text, senses: lang === 'en' ? [] : senses, zh, how, hom, of };
 }
 
 // ---------------- 语法 / 词汇标注 ----------------
 const RANK = { N1: 5, N2: 4, N3: 3, N4: 2, N5: 1 };
 const levelOK = (lv) => prefs.levels[lv || 'x'] !== false;
+// 词汇书里从这首歌记下的词：在歌词里也生成一张单词卡，用的是记的时候填的单词、读音和释义。
+// 分词分错了、自动标注标成了别的词的地方（つまづく 被拆成 つま + づく），记一次就纠正过来了：
+// 它盖住的那几个词上原来的自动标注不再出现。同一首歌里别的句子出现同样的写法，也一起标上。
+function vocabCards(line) {
+  const pid = S.track?.pid, out = [];
+  if (!pid || !S.vocab?.length) return out;
+  for (const v of S.vocab) {
+    if (v.song?.pid !== pid || !v.surface || !v.word) continue;
+    const same = v.line === line.text;
+    for (let at = line.text.indexOf(v.surface); at >= 0; at = line.text.indexOf(v.surface, at + 1)) {
+      const end = at + v.surface.length;
+      const toks = [];
+      line.tokens.forEach((t, ti) => { if (t.i0 + t.s.length > at && t.i0 < end) toks.push(ti); });
+      if (!toks.length) continue;
+      const first = line.tokens[toks[0]], last = line.tokens[toks[toks.length - 1]];
+      // 记的那一句怎么选的都算；别的句子里要正好是完整的几个词，免得一两个假名撞进别的词里
+      if (!same && !(first.i0 === at && last.i0 + last.s.length === end)) continue;
+      out.push({ type: 'v', title: v.word, rd: v.reading || '', lv: v.level || '', desc: v.meaning || '', start: toks[0], end: toks[toks.length - 1] + 1, mine: true });
+      break;
+    }
+  }
+  return out;
+}
 function annotationsFor(line) {
   if (!line || line.gap) return [];
   const items = [];
@@ -705,13 +747,16 @@ function annotationsFor(line) {
     }
   }
   if (prefs.annVocab) {
+    const mine = vocabCards(line);
+    const taken = (a, b) => mine.some((m) => a < m.end && b > m.start);
+    items.push(...mine);
     if (useAI) {
-      for (const v of line.ai.vocab) if (levelOK(v.lv)) items.push({ type: 'v', title: v.b, rd: v.r, lv: v.lv, desc: v.zh, start: v.start, end: v.end });
+      for (const v of line.ai.vocab) if (levelOK(v.lv) && !taken(v.start, v.end)) items.push({ type: 'v', title: v.b, rd: v.r, lv: v.lv, desc: v.zh, start: v.start, end: v.end });
     } else {
       line.tokens.forEach((tok, ti) => {
-        if (!tok.v) return;
+        if (!tok.v || taken(ti, ti + 1)) return;
         const d = S.dict[dictKey(tok)];
-        if (!d || d.miss || !levelOK(d.lv)) return;
+        if (!d || d.miss) return;
         // 分词器不认识的词，查到的词条读音又和实际唱的对不上：多半是拆错后撞上了别的词（騒 → そう・骚体），不标
         if (tok.u && d.fit === false) return;
         // 既没有级别、也不是常用词、中文词典里也查不到：多半是撞上了不相干的冷僻词条（如 イイ → Iran-Iraq）
@@ -721,14 +766,16 @@ function annotationsFor(line) {
         // 可能形 / 使役形（許せる、歌わす）：词典给回的是原形的词条（許す、歌う），标注也用原形
         const title = d.via ? d.w : tok.b;
         const m = chooseMeaning(d, line, `v:${title}`);
-        items.push({ type: 'v', title, rd: d.r, lv: d.lv, desc: m.text, senses: m.senses, pick: m.zh, how: m.how, start: ti, end: ti + 1 });
+        const e = m.hom || d; // 选中的义项属于同音的另一个词条时，级别和写法跟着它走
+        if (!levelOK(e.lv)) return;
+        items.push({ type: 'v', title, rd: d.r, lv: e.lv, hw: m.hom ? m.hom.w : '', desc: m.text, senses: m.senses, pick: m.zh, how: m.how, senseOf: m.of, mainLv: d.lv, mainW: d.w, start: ti, end: ti + 1 });
       });
     }
   }
   const seen = new Set();
   const uniq = items.filter((a) => { a.key = `${a.type}:${a.title}`; if (seen.has(a.key)) return false; seen.add(a.key); return true; });
   const hidden = S.hiddenAnn || new Set();
-  const rank = (a) => RANK[a.lv] ?? 2.5;
+  const rank = (a) => (a.mine ? 9 : RANK[a.lv] ?? 2.5); // 自己记的词排最前，不会被「每句最多显示几个」挤掉
   const byPlace = (x, y) => x.a.start - y.a.start || x.k - y.k;
   const all = uniq.map((a, k) => ({ a, k }));
   const shown = all.filter((x) => !hidden.has(x.a.key)).sort((x, y) => rank(y.a) - rank(x.a) || x.k - y.k).slice(0, prefs.annMax);
@@ -738,7 +785,7 @@ function annotationsFor(line) {
 }
 function chipHTML(a) {
   const multi = !a.off && a.senses?.length > 1; // 多义词：修改模式下悬停可展开全部义项来挑
-  return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">+${a.senses.filter((x) => x !== a.pick).length}</span>` : ''}</span>`;
+  return `<span class="chip ${a.type}${a.off ? ' off' : ''}${multi ? ' multi' : ''}" data-key="${esc(a.key)}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.hw && a.hw !== a.title ? `<span class="rd">${esc(a.hw)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(a.desc)}</span>${multi ? `<span class="more">+${a.senses.filter((x) => x !== a.pick).length}</span>` : ''}</span>`;
 }
 // 除了当前句，还有哪些行要列出标注（只在滚动样式下）：
 //   修改模式：前后各两句——这句唱过去了还来得及改
@@ -1168,7 +1215,7 @@ $('#db-info').addEventListener('click', (e) => {
 });
 $('#db-cancel').addEventListener('click', () => { S.sel = null; paintSelection(); updateDictBar(); resumeIfPausedByDict(); });
 $('#db-done').addEventListener('click', addVocab);
-$('#db-form').addEventListener('keydown', (e) => { if (e.key === 'Enter') addVocab(); });
+$('#db-form').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !composing(e)) addVocab(); });
 async function addVocab() {
   if (!S.sel) return;
   const info = selectionInfo();
@@ -1184,7 +1231,7 @@ async function addVocab() {
   toast(`已加入词汇书：${word}`);
   S.sel = null; paintSelection(); updateDictBar();
   resumeIfPausedByDict();
-  if (!$('#vocab').hidden) loadVocab();
+  loadVocab(); // 词汇书和歌词里的单词卡都要更新
 }
 $('#db-char').addEventListener('change', (e) => { prefs.dictChar = e.target.checked; savePrefs(); app.classList.toggle('by-char', S.mode === 'dict' && prefs.dictChar); });
 $('#db-pause').addEventListener('change', (e) => { prefs.dictPause = e.target.checked; savePrefs(); });
@@ -1198,8 +1245,13 @@ const sense = { ann: null, box: null, li: null, order: [], timer: 0, busy: false
 // 一张标注属于哪一行：滚动样式里看它在哪一行（修改模式下前后几句也有标注），大字样式里就是当前句
 const annsAt = (li) => (li === null ? S.anns : S.annsByLine?.get(li)) || [];
 function hideSensePop() { clearTimeout(sense.timer); sensePop.hidden = true; sense.ann = null; }
-const altCardHTML = (a, text, i, animate) =>
-  `<span class="chip v alt${animate ? ' in' : ''}" data-i="${i}" style="--i:${i}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${a.lv ? `<span class="lv">${a.lv}</span>` : ''}<span class="ds">${esc(text)}</span></span>`;
+// 每张义项卡带的是它自己那个词条的写法和级别（ここ：此処 N5 / 個々 N1），不是现在选中的那条的
+const altCardHTML = (a, text, i, animate) => {
+  const h = a.senseOf?.get(text);
+  const lv = h ? h.lv : a.mainLv ?? a.lv;
+  const hw = h ? h.w : (a.senseOf?.size && a.mainW !== a.title ? a.mainW : '');
+  return `<span class="chip v alt${animate ? ' in' : ''}" data-i="${i}" style="--i:${i}"><b>${esc(a.title)}</b>${a.rd && a.rd !== a.title ? `<span class="rd">${esc(a.rd)}</span>` : ''}${hw ? `<span class="rd">${esc(hw)}</span>` : ''}${lv ? `<span class="lv">${lv}</span>` : ''}<span class="ds">${esc(text)}</span></span>`;
+};
 const currentSenseChip = () => sense.box?.querySelector(`.chip.multi[data-key="${CSS.escape(sense.ann.key)}"]`);
 function renderSensePop(animate) {
   const a = sense.ann;
@@ -1405,6 +1457,7 @@ function endReading() {
   previewReading(editing.orig);
   readingSegEl()?.classList.remove('editing');
   editing = null;
+  $('#rp-input').blur();
   $('#reading-pop').hidden = true;
   editDone();
 }
@@ -1448,6 +1501,7 @@ async function saveReading(reading) {
   try {
     await api.post('/api/song/reading', { key: S.song.key, scope, lineText: line.text, ti, si, seg: seg.t, reading });
   } catch (e) { return toast(`保存失败：${e.message}`); }
+  $('#rp-input').blur();
   $('#reading-pop').hidden = true;
   editing = null;
   editDone();
@@ -1467,7 +1521,7 @@ $('#rp-input').addEventListener('input', () => {
   editing.live = toHira($('#rp-input').value.trim());
   previewReading(editing.live || editing.orig);
 });
-$('#rp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#rp-save').click(); });
+$('#rp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !composing(e)) $('#rp-save').click(); });
 
 // ---------------- 资料库 ----------------
 // all = 整个资料库；tracks = 现在这份列表的来源（整个资料库，或某个播放列表）
@@ -1844,7 +1898,14 @@ const vocab = { order: null, memory: false, revealed: new Set() };
 async function loadVocab() {
   try { vocabList = await api.get('/api/vocab'); } catch { vocabList = []; }
   renderVocab();
+  syncVocabCards();
 }
+// 词汇书变了（加了、删了、改了释义）：歌词里的单词卡跟着变
+function syncVocabCards() {
+  S.vocab = vocabList;
+  if (S.lines.length && S.active > -2) paintAnnotations();
+}
+api.get('/api/vocab').then((list) => { vocabList = list; syncVocabCards(); }, () => {});
 // 当前应该显示哪些词、按什么顺序
 function vocabShown() {
   const q = $('#vocab-search').value.trim().toLowerCase();
@@ -1942,7 +2003,7 @@ $('#vocab-list').addEventListener('focusout', (e) => {
   const id = m.closest('.vcard').dataset.id;
   const v = vocabList.find((x) => x.id === id);
   const meaning = m.textContent.trim();
-  if (v && v.meaning !== meaning) { v.meaning = meaning; api.post('/api/vocab/update', { id, meaning }).catch(() => toast('保存失败')); }
+  if (v && v.meaning !== meaning) { v.meaning = meaning; syncVocabCards(); api.post('/api/vocab/update', { id, meaning }).catch(() => toast('保存失败')); }
   measureMeanings([m.closest('.vcard')]);
 });
 $('#vocab-list').addEventListener('click', async (e) => {
@@ -1966,6 +2027,7 @@ $('#vocab-list').addEventListener('click', async (e) => {
     btn.disabled = true;
     try { await api.post('/api/vocab/delete', { id }); } catch (err) { btn.disabled = false; return toast(`删除失败：${err.message}`); }
     vocabList = vocabList.filter((x) => x.id !== id);
+    syncVocabCards();
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return renderVocab();
     // 卡片淡出并收起，下面的卡片顺势上移
     const cs = getComputedStyle(card);
@@ -1987,6 +2049,7 @@ $('#vocab-list').addEventListener('click', async (e) => {
 // ---------------- 歌词源 ----------------
 async function openSource(q = '') {
   $('#source-modal').hidden = false;
+  $('#src-q').value = q; // 从菜单打开时清空上次搜的词；点「搜索」进来的保持原样
   if (!S.track) { $('#src-list').innerHTML = '<div class="empty">先播放一首歌</div>'; return; }
   $('#src-list').innerHTML = '<div class="empty">搜索中…</div>';
   const p = new URLSearchParams({ name: S.track.name, artist: S.track.artist || '', duration: S.track.duration || 0, q });
@@ -2009,7 +2072,7 @@ async function openSource(q = '') {
   };
 }
 $('#src-search').addEventListener('click', () => openSource($('#src-q').value.trim()));
-$('#src-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') openSource($('#src-q').value.trim()); });
+$('#src-q').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !composing(e)) openSource($('#src-q').value.trim()); });
 $('#src-auto').addEventListener('click', async () => {
   if (!S.song) return;
   await api.post('/api/song/source', { key: S.song.key, cand: null });
