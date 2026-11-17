@@ -991,10 +991,25 @@ function setMode(mode) {
   $('#reading-pop').hidden = true;
   tip.hidden = true;
   hideSensePop();
-  // 进出模式时各行的高矮全变了（记词模式下整首歌的标注都展开），之前自己划到的位置已经对不上任何东西：
-  // 结束「自己划走了」的状态，下面才会回到正在唱的那一句。不然刚划过又马上进出模式，页面会停在一个不相干的地方
-  clearTimeout(freeTimer);
-  elScroll.classList.remove('free');
+  // 进出模式时各行的高矮全变了（记词模式下整首歌的标注都展开），滚动位置的那个数字已经对不上原来的内容，
+  // 不能原样留着（会停在一个不相干的地方）。分两种情况：
+  //   - 进入模式、而且刚自己划走过（想记的那句不是正在唱的）：认准眼前的那一句，让它留在屏幕上原来的位置，
+  //     周围的行在它上下展开；仍然算「自己划走了」，过一会儿才回到正在唱的那句
+  //   - 其余情况（退出模式，或者没划走过）：回到正在唱的那一句。所以退出再马上进来，不会带着上次在模式里划到的位置
+  let anchor = null;
+  if (S.mode && prefs.view === 'apple' && elScroll.classList.contains('free')) {
+    const box = elScroll.getBoundingClientRect(), y = box.top + box.height * 0.4;
+    const [lo, hi] = visibleRange(0);
+    let best = Infinity;
+    for (let k = lo; k <= hi; k++) {
+      const el = elScroll.children[k], r = el.getBoundingClientRect();
+      if (S.lines[k]?.gap || !r.height) continue;
+      const d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0; // 离屏幕四成高的那条线最近的一句
+      if (d < best) { best = d; anchor = { el, top: r.top }; }
+    }
+  }
+  if (anchor) armReturn();
+  else { clearTimeout(freeTimer); elScroll.classList.remove('free'); }
   // 进出模式会改变各行的高矮（修改模式下前后几句的标注展开 / 收起）：
   // 这些变化都放在 glide 里做，各行从原来的位置顺着滑到新位置，而不是跳过去
   glide(() => {
@@ -1004,7 +1019,8 @@ function setMode(mode) {
     if (S.mode !== 'dict') { S.sel = null; paintSelection(); resumeIfPausedByDict(); }
     updateDictBar();
     paintAnnotations();
-    jumpToActive();
+    if (anchor) elScroll.scrollTop += anchor.el.getBoundingClientRect().top - anchor.top;
+    else jumpToActive();
   });
 }
 function resumeIfPausedByDict() {
