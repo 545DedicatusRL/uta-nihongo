@@ -2020,6 +2020,7 @@ $('#src-auto').addEventListener('click', async () => {
 // ---------------- 设置 ----------------
 async function openSettings() {
   $('#settings-modal').hidden = false;
+  $('#settings-modal .modal-body').scrollTop = 0; // 每次打开都从头看起，不停在上次划到的地方
   $('#set-style').value = prefs.annStyle;
   $('#set-max').value = prefs.annMax; $('#set-max-val').textContent = `${prefs.annMax} 个`;
   $('#set-grammar').checked = prefs.annGrammar; $('#set-vocabs').checked = prefs.annVocab;
