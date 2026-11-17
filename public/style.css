@@ -443,13 +443,14 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
 .vdel.armed .ext { grid-template-columns: 1fr; }
 @media (prefers-reduced-motion: reduce) { .vdel, .vdel .ext { transition: none; } }
 .vcard .w { font: 700 20px/1.7 var(--font-ja); }
-/* 记忆模式：释义、例句和翻译整块模糊；鼠标移上去出现「展示释义」，点了这张卡就恢复 */
+/* 记忆模式：释义、例句和翻译整块模糊，词上面的读音也一起模糊；鼠标移上去出现「展示释义」，点了这张卡就都恢复 */
 .vwrap { position: relative; }
 .vbody { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; transition: filter .35s ease, opacity .35s ease; }
 .vcard.veil .vbody { filter: blur(7px); opacity: .55; pointer-events: none; user-select: none; }
-/* 「展示释义」：上下在模糊块的正中；左右对准释义文字的中间（释义是靠左排的短短一段，--mw 是文字的宽度，
-   由 app.js 量出来）；文字比按钮还短时贴着左边，不超出卡片 */
-.vreveal { position: absolute; top: 50%; left: max(calc(var(--mw, 120px) / 2), 2.6em); translate: -50% -50%; opacity: 0; pointer-events: none; transition: opacity .15s; background: rgba(40, 36, 52, .9); }
+.vcard .w rt { transition: filter .35s ease, opacity .35s ease; }
+.vcard.veil .w rt { filter: blur(5px); opacity: .5; }
+/* 「展示释义」：在模糊块的正中间 */
+.vreveal { position: absolute; top: 50%; left: 50%; translate: -50% -50%; opacity: 0; pointer-events: none; transition: opacity .15s; background: rgba(40, 36, 52, .9); }
 .vreveal:hover { background: rgba(62, 56, 78, .95); }
 .vcard.veil .vwrap:hover .vreveal, .vcard.veil .vreveal:focus-visible { opacity: 1; pointer-events: auto; }
 .btn.toggle.on { background: rgba(255, 255, 255, .2); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .45); }
@@ -560,5 +561,5 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
   .view-focus #meta { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .vbody, .line, .f-cur, .drawer, .timed .fu, .timed .rk, .line.active .ann, .line.ann-on .ann, .line .ann.leaving, .dots.idle .dots-g, .line.gap.active .dots, #f-cur .dots { transition: none; animation: none; }
+  .vbody, .vcard .w rt, .line, .f-cur, .drawer, .timed .fu, .timed .rk, .line.active .ann, .line.ann-on .ann, .line .ann.leaving, .dots.idle .dots-g, .line.gap.active .dots, #f-cur .dots { transition: none; animation: none; }
 }

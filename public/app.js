@@ -1986,7 +1986,7 @@ $('#queue-repeat').addEventListener('click', () => api.post('/api/queue/repeat',
 // ---------------- 词汇书 ----------------
 let vocabList = [];
 // order：打乱后的顺序（词条 id 的数组）；null = 默认顺序，也就是按添加时间，新的在前
-// memory：记忆模式（打乱 + 遮住释义）；revealed：记忆模式下已经点开看过释义的词
+// memory：记忆模式（打乱 + 遮住读音和释义）；revealed：记忆模式下已经点开看过的词
 const vocab = { order: null, memory: false, revealed: new Set() };
 async function loadVocab() {
   try { vocabList = await api.get('/api/vocab'); } catch { vocabList = []; }
@@ -2024,13 +2024,6 @@ function renderVocab() {
         <button class="btn small" data-act="play" title="播放这一句">▶ 听这句</button></div>
     </div>`;
   }).join('') : `<div class="empty">${vocabList.length ? '没有匹配的单词' : '词汇书还是空的。<br>打开「记词」模式，点选歌词里的词就能添加。'}</div>`;
-  measureMeanings();
-}
-// 量出每张卡片上释义文字实际有多宽，记在卡片上：记忆模式的「展示释义」按钮要对准它的中间
-function measureMeanings(cards = $$('#vocab-list .vcard')) {
-  const range = document.createRange();
-  const widths = cards.map((card) => { range.selectNodeContents($('.m', card)); return range.getBoundingClientRect().width; });
-  cards.forEach((card, i) => card.style.setProperty('--mw', `${Math.round(widths[i])}px`));
 }
 // 只换顺序 / 遮挡状态、词条本身没变时：挪动现有的卡片而不是重画，
 // 这样卡片能从原位置滑到新位置，释义的模糊也能渐变
@@ -2097,7 +2090,6 @@ $('#vocab-list').addEventListener('focusout', (e) => {
   const v = vocabList.find((x) => x.id === id);
   const meaning = m.textContent.trim();
   if (v && v.meaning !== meaning) { v.meaning = meaning; syncVocabCards(); api.post('/api/vocab/update', { id, meaning }).catch(() => toast('保存失败')); }
-  measureMeanings([m.closest('.vcard')]);
 });
 $('#vocab-list').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-act]');
