@@ -159,7 +159,10 @@ function correctWithRomaji(tokens, roma) {
       }
       const text = seg.t.normalize('NFKC');
       let piece = '';
-      if (/^[\u3040-\u30ffー]+$/.test(text)) piece = kanaPattern(toHira(text));
+      if (/^[\u3040-\u30ffー]+$/.test(text)) {
+        piece = kanaPattern(toHira(text));
+        if (seg.m) piece = `(?:${piece}|${kanaPattern(toHira(seg.m))})`; // 旧假名：罗马音可能照写法（hi），也可能照念法（i）
+      }
       else {
         for (const ch of text) {
           if (KANA.test(ch)) piece += kanaPattern(toHira(ch));
@@ -463,6 +466,55 @@ function fixSuru(raw) {
   return out;
 }
 
+// ---------------- 旧假名 ----------------
+// 有的歌词用旧假名写（想ひ出、言ふ、考へる）：念出来和现代写法一样，可分词器照现代写法才认得，
+// 不处理的话「想ひ出」会被拆成 想（そう）+ ひ + 出，查到不相干的词。
+// 所以分词前先悄悄换成现代写法（想い出），分完再把歌词原来的字换回去——显示的还是原文，只有原形和查词用现代写法。
+// 现代文里 ひ / ふ / へ / ほ 紧跟在汉字后面的情况多得是（夢へ、恋ひとつ、歌ふたり），所以每一处都要验证：
+// 换了以后它得和前面的汉字连成一个分词器认识的词，并且整句分出来的词更少。词数一样时，要满足下面之一才换：
+//   - 原来那个词是文言活用（言ふ 的 四段）
+//   - 换不换都是同一段、同一种词（考へる / 考える：分词器两种写法都收了，查词要用现代的）
+//   - 实词变少了，而且那个假名原来不是某个名词的开头（奪はれた：奪 + はれる → 奪わ + れる；
+//     「歌ふたり」的 ふたり 是名词，不动）
+// ゐ / ゑ 现代文里不用，直接换。只做一个字换一个字的这几种，这样每个字在一句里的位置不变。
+// は → わ（言はない）不做：汉字后面的 は 几乎都是助词，而「今わ」「歌わ」又恰好都是词，拿真实歌词试过会误伤。
+const OLD_KANA = { ひ: 'い', ふ: 'う', へ: 'え', ほ: 'お' };
+function modernSpelling(tokenizer, text) {
+  let cur = text.replace(/ゐ/g, 'い').replace(/ゑ/g, 'え');
+  let parsed = null;
+  const content = (toks) => toks.filter((t) => t.pos === '副詞' || ((t.pos === '名詞' || t.pos === '動詞' || t.pos === '形容詞') && t.pos_detail_1 !== '接尾' && t.pos_detail_1 !== '非自立')).length;
+  const tokenAt = (toks, i) => { let p = 0; for (const t of toks) { const e = p + t.surface_form.length; if (i < e) return { t, start: p }; p = e; } return null; };
+  for (let i = 1; i < text.length; i++) {
+    if (!OLD_KANA[text[i]] || !isKanji(text[i - 1])) continue;
+    const next = cur.slice(0, i) + OLD_KANA[text[i]] + cur.slice(i + 1);
+    const a = parsed || (parsed = tokenizer.tokenize(cur)), b = tokenizer.tokenize(next);
+    const was = tokenAt(a, i), now = tokenAt(b, i);
+    if (!was || !now || now.start >= i || now.t.word_type !== 'KNOWN') continue; // 换了也没和前面的汉字连成一个词
+    let ok = b.length < a.length;
+    if (!ok && b.length === a.length) {
+      const classical = was.start < i && /四段|二段|文語/.test(was.t.conjugated_type || '');
+      const sameWord = was.start === now.start && was.t.surface_form.length === now.t.surface_form.length && was.t.pos === now.t.pos;
+      const fewer = content(b) < content(a) && !(was.start === i && was.t.pos === '名詞');
+      ok = classical || sameWord || fewer;
+    }
+    if (ok) { cur = next; parsed = b; }
+  }
+  return cur;
+}
+// 分完词以后，把换过的字换回歌词原来的样子；seg.m 记下现代写法，和罗马音对齐时两种都认
+function restoreSpelling(tokens, text) {
+  for (const tok of tokens) {
+    if (text.startsWith(tok.s, tok.i0)) continue;
+    let p = tok.i0;
+    for (const seg of tok.segs) {
+      const orig = text.slice(p, p + seg.t.length);
+      p += seg.t.length;
+      if (orig !== seg.t) { seg.m = seg.t; seg.t = orig; }
+    }
+    tok.s = text.slice(tok.i0, tok.i0 + tok.s.length);
+  }
+}
+
 // ---------------- 主入口 ----------------
 // lines: [{ t, end, text, zh?, roma?, ct? }]；opts: { kana, meta, userDict }
 export async function analyzeLyrics(lines, opts = {}) {
@@ -475,7 +527,8 @@ export async function analyzeLyrics(lines, opts = {}) {
   return {
     stats,
     lines: lines.map((line) => {
-      const raw = fixSuru(fixMitai(tokenizer.tokenize(line.text)));
+      const modern = modernSpelling(tokenizer, line.text);
+      const raw = fixSuru(fixMitai(tokenizer.tokenize(modern)));
       const tails = tailFlags(raw);
       let i0 = 0;
       const tokens = raw.map((t, ri) => {
@@ -496,6 +549,7 @@ export async function analyzeLyrics(lines, opts = {}) {
         i0 += s.length;
         return tok;
       });
+      if (modern !== line.text) restoreSpelling(tokens, line.text);
       mergeUnknownVerbs(tokens, raw);
       mergeCompounds(tokens);
 
@@ -519,6 +573,7 @@ export async function analyzeLyrics(lines, opts = {}) {
         }
       }));
       for (const tok of tokens) {
+        for (const g of tok.segs) delete g.m;
         tok.r = tok.segs.map((g) => (g.r !== undefined ? g.r : toHira(g.t))).join('');
         const h = tok.v ? readingHint(tok) : '';
         if (h) tok.h = h;
@@ -527,7 +582,10 @@ export async function analyzeLyrics(lines, opts = {}) {
       // 语法点是在原始分词上匹配的，合并过词之后把下标换算过来
       const rawToTok = [];
       tokens.forEach((tok, ti) => { for (const ri of tok.raw) rawToTok[ri] = ti; delete tok.raw; });
-      const grammar = matchGrammar(raw).map((g) => ({ ...g, start: rawToTok[g.start], end: rawToTok[g.end - 1] + 1 }));
+      const rawAt = [0];
+      for (const t of raw) rawAt.push(rawAt[rawAt.length - 1] + t.surface_form.length);
+      // text 取歌词原文里的那一段（分词用的可能是换成现代写法的字）
+      const grammar = matchGrammar(raw).map((g) => ({ ...g, text: line.text.slice(rawAt[g.start], rawAt[g.end]), start: rawToTok[g.start], end: rawToTok[g.end - 1] + 1 }));
       return { ...line, tokens, grammar };
     }),
   };
