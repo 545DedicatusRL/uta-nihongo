@@ -168,6 +168,13 @@ function markGroups() {
   }
 }
 
+// 当前这一组是从哪一句开始亮着的。一句接一句唱下来时是这一组的第一句；
+// 要是直接跳到了组中间的某一句（点歌词、拖进度条），就从跳到的那一句算起——前面那几句没有刚被唱过，不该亮着
+function groupFrom() {
+  const a = S.active, g = a >= 0 && S.grp?.[a];
+  return g && S.grpFrom >= g[0] && S.grpFrom <= a ? S.grpFrom : Math.max(a, 0);
+}
+
 // 长间奏插入「间奏」占位行（三个点）
 function withGaps(lines) {
   const out = [];
@@ -436,12 +443,18 @@ const elScroll = $('#scroll');
 
 function setActive(i) {
   const first = S.active === -2; // 刚渲染完：直接就位，不做动画
+  // 实验功能 2：这一组从哪句开始亮。只有「从同组的上一句接着唱下来」才沿用原来的起点，否则（跳转过来的）从这一句算起
+  const prev = S.active, jumped = S.jumped;
+  S.jumped = false;
+  const g = i >= 0 && S.grp?.[i];
+  const carried = g && !jumped && (prev === i - 1 || prev === i) && S.grpFrom >= g[0] && S.grpFrom <= Math.min(prev, i);
+  if (!carried) S.grpFrom = i;
   S.active = i;
   hideSensePop();
   const apply = () => {
     const els = elScroll.children, a = Math.max(i, 0);
     const vis = S.vis, inGap = !!S.lines[a]?.gap; // 正在间奏：三个点自己算一行
-    const [ga] = (i >= 0 && S.grp?.[a]) || [a]; // 当前句所在的那一组从哪句开始（实验功能 2）；平时就是当前句自己
+    const ga = groupFrom(); // 和当前句一起亮着的那几句从哪句开始（实验功能 2）；平时就是当前句自己
     for (let k = 0; k < els.length; k++) {
       const el = els[k];
       // 只改状态真的变了的行：离当前行 6 行以外的样子都一样
@@ -495,7 +508,7 @@ let glideAnims = [];
 function jumpToActive() {
   if (prefs.view !== 'apple' || elScroll.classList.contains('free')) return;
   const a = Math.max(S.active, 0);
-  const el = elScroll.children[S.active >= 0 ? S.grp?.[a]?.[0] ?? a : a]; // 一组紧凑的句子：对准这一组的第一句，组里换句时不滚动
+  const el = elScroll.children[groupFrom()]; // 一组紧凑的句子：对准亮着的第一句，组里换句时不滚动
   if (!el) return;
   const H = elScroll.clientHeight;
   let top = el.offsetTop - H * 0.3;
@@ -634,8 +647,16 @@ function tick() {
   }
   if (!S.lines.length) return;
   const t = pos - S.offset;
+  // 时间不连续（往回退了，或者一下子跳过去一大截）：是跳转，不是唱过来的。小幅的校准（和 Apple Music 对表）不算
+  if (S.lastT !== undefined && (t < S.lastT - 0.6 || t > S.lastT + 1.5)) S.jumped = true;
+  S.lastT = t;
   const i = findActive(t);
   if (i !== S.active) setActive(i);
+  else if (S.jumped) {
+    // 跳转后还在同一句（比如点了正在唱的这一句从头听）：同组里前面亮着的句子也要收起来
+    S.jumped = false;
+    if (i >= 0 && groupFrom() < i) { S.grpFrom = i; setActive(i); }
+  }
   if (holdTail.length) { for (const s of holdTail) paintHold(s, t); holdTail = holdTail.filter((s) => s.e); }
   const f = S.fill;
   if (!f) return;
@@ -807,8 +828,7 @@ function annLines() {
   const out = new Set();
   if (prefs.view !== 'apple' || !prefs.ann || S.active === -2) return out;
   // 实验功能 2：一组紧凑的句子一起显示时，组里上面已经唱过的那几句的标注留着，不收起来
-  const g = S.active >= 0 && S.grp?.[S.active];
-  if (g) for (let k = g[0]; k < S.active; k++) out.add(k);
+  if (S.active >= 0) for (let k = groupFrom(); k < S.active; k++) out.add(k);
   if (!S.mode) return out;
   if (S.mode === 'dict') {
     S.lines.forEach((l, k) => { if (!l.gap && k !== S.active) out.add(k); });
@@ -933,6 +953,7 @@ document.addEventListener('mouseover', (e) => {
 let popClosedAt = -1e9; // 上一次因为点到外面而关掉读音小窗的时刻
 function seekTo(sec) {
   sec = Math.max(0, sec);
+  S.jumped = true; // 自己跳的：哪怕只跳了一点点（点了紧挨着的下一句），也不算「唱过来的」
   setClock(sec);
   S.seekHold = performance.now() + 700;
   control('seek', sec);
