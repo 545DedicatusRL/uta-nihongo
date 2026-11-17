@@ -135,6 +135,10 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .line .ann.leaving { display: flex; position: absolute; pointer-events: none; animation: ann-out .2s ease-in forwards; }
 @keyframes ann-out { to { opacity: 0; transform: translateY(-4px); } }
 .line.past { color: var(--fg-3); }
+/* 实验功能 2：紧凑的几句一起显示。.co = 和当前句同一组、前面已经唱过的句子：不暗下去，和当前句一样亮、一样清楚、一样大 */
+.line.co { color: var(--fg); transform: none; }
+/* 同组里唱过的句子：标注原样留着（不重新淡入，也不变暗） */
+.line.co.ann-on .ann { animation: none; opacity: 1; }
 #scroll.free .line, .dict-mode .line, .edit-mode .line { filter: none; opacity: 1; }
 /* 间奏行平时收起、不占位置；到了间奏才展开，上下的歌词被它推开（位移由 glide 的弹簧动画补上），间奏结束再合拢 */
 .line.gap { cursor: default; height: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; }
@@ -170,15 +174,21 @@ ruby { ruby-align: center; }
 .timed .fu { display: inline-block; transition: transform var(--lt, .8s) var(--spring, cubic-bezier(.3, .1, .2, 1)); }
 .line.active.timed .fu.on, #f-cur.timed .fu.on { transform: translateY(-.07em); }
 .dict-mode .timed .fu.on, .edit-mode .timed .fu.on { transform: none !important; }
-.timed .fu { --p: 0; background: linear-gradient(90deg, #fff calc(var(--p) * 110% - 10%), rgba(255, 255, 255, .38) calc(var(--p) * 110%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.timed .fu { --p: 0; background: linear-gradient(90deg, #fff calc(var(--p) * 110% - 10%), rgba(255, 255, 255, calc(.38 + .3 * var(--e, 0))) calc(var(--p) * 110%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .timed .fu rt { color: rgba(255, 255, 255, calc(.4 + .6 * var(--p))); opacity: 1; }
+/* 实验功能：长音强调。--e（0–1）由 app.js 的 paintHold 每帧按进度给，--ea 是这个音的强度；
+   用 scale / translate 而不是 transform：transform 上挂着「抬起来」的过渡，每帧改它会被过渡拖着走 */
+.timed .fu.emon { position: relative; z-index: 1; transform-origin: 50% 64%;
+  scale: calc(1 + .14 * var(--ea, 1) * var(--e, 0)); translate: 0 calc(-.05em * var(--e, 0));
+  filter: drop-shadow(0 0 calc(.24em * var(--e, 0)) rgba(255, 255, 255, calc(.8 * var(--ea, 1) * var(--e, 0)))); }
+.dict-mode .timed .fu.emon, .edit-mode .timed .fu.emon { scale: none; translate: none; filter: none; }
 .line:not(.active).timed .fu { background: none; color: inherit; }
 .line:not(.active).timed .fu rt { color: inherit; opacity: .82; }
 
 /* 标注：行内下划线 + 行下的标签 / 卡片 */
-.active .tok.hg, #f-cur .tok.hg { box-shadow: inset 0 -2px 0 var(--grammar); }
-.active .tok.hv, #f-cur .tok.hv { box-shadow: inset 0 -2px 0 var(--vocab); }
-.active .tok.hg.hv, #f-cur .tok.hg.hv { box-shadow: inset 0 -2px 0 var(--vocab), inset 0 -4px 0 var(--grammar); }
+.active .tok.hg, .co.ann-on .tok.hg, #f-cur .tok.hg { box-shadow: inset 0 -2px 0 var(--grammar); }
+.active .tok.hv, .co.ann-on .tok.hv, #f-cur .tok.hv { box-shadow: inset 0 -2px 0 var(--vocab); }
+.active .tok.hg.hv, .co.ann-on .tok.hg.hv, #f-cur .tok.hg.hv { box-shadow: inset 0 -2px 0 var(--vocab), inset 0 -4px 0 var(--grammar); }
 .no-ann .tok.hg, .no-ann .tok.hv { box-shadow: none !important; }
 .ann { display: none; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .line.active .ann { display: flex; }

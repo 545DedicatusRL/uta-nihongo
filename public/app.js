@@ -26,6 +26,8 @@ const DEFAULT_PREFS = {
   annStyle: 'chips', annMax: 4, annGrammar: true, annVocab: true, annSource: 'auto',
   levels: { N5: false, N4: true, N3: true, N2: true, N1: true, x: true },
   dictChar: false, dictPause: true, meaningLang: 'zh', autoSense: true,
+  fxHold: false, // 实验功能：长音强调（默认关，在设置里打开）
+  fxGroup: false, // 实验功能 2：紧凑的几句一起显示（默认关，在设置里打开）
 };
 let prefs = { ...DEFAULT_PREFS };
 try { const saved = JSON.parse(localStorage.getItem('uta-prefs') || '{}'); prefs = { ...prefs, ...saved, levels: { ...prefs.levels, ...(saved.levels || {}) } }; } catch { /* 无痕模式等 */ }
@@ -122,6 +124,7 @@ async function loadSong(track, { refresh = false, keep = false } = {}) {
   S.hiddenAnn = new Set(song.hiddenAnn || []);
   S.senses = { ...(song.senses || {}) };
   S.lines = withGaps(song.lines);
+  markGroups();
   S.active = -2;
   updateOffsetLabel();
   const srcName = { netease: '网易云', qq: 'QQ音乐' }[song.source?.source] || '';
@@ -135,6 +138,31 @@ async function loadSong(track, { refresh = false, keep = false } = {}) {
   if (song.flags?.japanese) fetchDict(token);
 }
 const reloadSong = (opts = {}) => S.track && loadSong(S.track, { keep: true, ...opts });
+
+// ---------------- 实验功能 2：紧凑的几句一起显示 ----------------
+// 一句歌词一闪而过、紧跟着就是下一句的时候（「Hey! Hey!」「僕は無力だ」连着三遍…），不再一句一句地换：
+// 每一句还是唱到了才亮；但同一组里前面唱过的句子不暗下去，一直亮到整组唱完。
+// 这一组停在原地不滚动（对准组里的第一句），整组唱完再一起换到后面。
+// 怎样算「紧凑」——两条都要满足：
+//   1. 这一句很短：从它开始到下一句开始不超过 GROUP.short 秒
+//   2. 中间没有停顿：这一句唱完到下一句开始不超过 GROUP.gap 秒（逐行歌词不知道一句唱到哪，只看第 1 条）
+// 只看第 2 条不行：大多数歌的每一句都是紧接着上一句的。一组最多 GROUP.max 句，再多就另起一组。
+const GROUP = { gap: 0.2, short: 1.6, max: 4 };
+// S.grp[i] = [这一组的第一句, 最后一句]（行号）；不成组的就是它自己
+function markGroups() {
+  const L = S.lines;
+  S.grp = L.map((_, i) => [i, i]);
+  if (!prefs.fxGroup) return;
+  const sung = (l) => (l.ct?.some(Boolean) ? Math.max(...l.ct.filter(Boolean).map((c) => c[1])) : l.end);
+  const tight = (a, b) => !a.gap && !b.gap && b.t - a.t <= GROUP.short && b.t - sung(a) <= GROUP.gap;
+  for (let i = 0; i < L.length;) {
+    let j = i;
+    while (j + 1 < L.length && j - i + 1 < GROUP.max && tight(L[j], L[j + 1])) j++;
+    const g = [i, j];
+    for (let k = i; k <= j; k++) S.grp[k] = g;
+    i = j + 1;
+  }
+}
 
 // 长间奏插入「间奏」占位行（三个点）
 function withGaps(lines) {
@@ -171,10 +199,134 @@ function setArt(track, cover) {
   probe(`/api/artwork?pid=${encodeURIComponent(track.pid)}&current=1`, () => { if (art.track === track) art.status = 'ok'; }, fail);
 }
 
+// ---------------- 实验功能：长音强调 ----------------
+// 逐字歌词里拖得很长的音，唱到时会放大、发光、往外「冒」一下，唱完再缓缓落回去；拖得越长，冒得越明显、停得越久。
+// 一、哪个音算长音。看的是「拖了多久」= 这一段的时长 −（音数 − 1）× 平常一个音的时长：
+//   - 假名：一个假名一个音，拖了多久就是它自己的时长；小写的ゃゅょ等和前一个假名算同一个音
+//   - 带注音的汉字：按读音的音数算（「色褪」いろあ = 3 个音，1.5 秒里有两个音是平常地唱过去的，剩下的 1 秒是拖的）；
+//     没有读音的汉字按两个音算。（直接用「时长 ÷ 音数」的话，多音的汉字几乎永远够不到门槛）
+//   - 英文单词：按音节数算，门槛放宽一些
+//   拖得不到 HOLD_MIN 的完全不触发。
+// 二、带着两边一起。和长音在同一个短语里的字（实词 + 后面跟着的助词、词尾）也一起冒：
+//   - 左边的：各自在唱到的时候冒起来（所以是左边先、右边后，像一道波）
+//   - 右边的：紧跟在长音后面唱出来的那一小段尾巴（「云フ」的フ、「星座が」的が），同样唱到时冒起来
+//   每个字只在自己被唱着的时候停在上面：下一个字起来时它就很快落下去，所以看上去是一个鼓包从左往右走，
+//   走到长音那里停住，长音唱完再缓缓落下。离长音越远幅度越小。
+const HOLD_MORA = 0.25; // 平常唱歌一个音大约多长（秒）
+const HOLD_MIN = 0.8;   // 至少拖这么久才算长音
+const HOLD_FULL = 1.9;  // 拖到这么久效果就到顶了
+const HOLD_LATIN = 1.3; // 英文音节本来就比日语的一个音长，门槛按这个倍数放宽
+const HOLD_CAP = 4;     // 一个音最多按这么久算：再长多半是歌词时间把间奏也算进去了
+const HOLD_SPREAD = { max: 10, within: 2.5, fade: 0.08, floor: 0.6 }; // 往左带几个字、最多隔多久（秒）、每远一个字弱多少、最弱到多少
+const HOLD_NEXT = 0.3; // 唱完后这么久以内紧接着又有字冒起来：这个字要快点落，给后面的让位
+const HOLD_TAIL = { max: 5, within: 0.8 }; // 往右带几个字、最晚在长音唱完后多久（秒）以内开始唱的
+const SMALL_KANA = /[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/;
+const moraCount = (s) => { let n = 0; for (const c of s) if (/[ぁ-ゖァ-ヺー〜～]/.test(c) && !SMALL_KANA.test(c)) n++; return n; };
+const syllables = (w) => Math.max(1, (w.toLowerCase().replace(/e$/, '').match(/[aeiouy]+/g) || []).length);
+// 返回 Map：字符下标 → { a: 强度 0–1, t0: 从什么时候冒起来, t1: 什么时候开始落, q: 后面紧跟着别的字（要快点落） }。每句只算一次
+function holdPlan(line) {
+  if (line._hold) return line._hold;
+  const plan = (line._hold = new Map());
+  const ct = line.ct;
+  if (!ct || !line.tokens) return plan;
+  const amp = (dur, m, unit, min) => { const held = dur - (m - 1) * unit; return held >= min ? 0.55 + 0.45 * clamp((held - min) / (HOLD_FULL - HOLD_MIN)) : 0; };
+  // units：这一句里能冒起来的最小单位，从左到右。cs = 它占的字符下标；g = 属于第几个短语；w = 属于第几个词；own = 它自己是不是长音（强度）
+  const units = [];
+  let g = 0, w = 0;
+  const push = (cs, m) => {
+    const a0 = ct[cs[0]], a1 = ct[cs[cs.length - 1]] || a0;
+    const t1 = a0 && Math.min(a1[1], a0[0] + HOLD_CAP);
+    if (a0) units.push({ cs, t0: a0[0], t1, g, w, own: m ? amp(t1 - a0[0], m, HOLD_MORA, HOLD_MIN) : 0, a: 0 });
+  };
+  for (const tok of line.tokens) {
+    const latin = /^[A-Za-z'’]+$/.test(tok.s);
+    const word = /[぀-ヿ㐀-鿿々〆A-Za-z0-9]/.test(tok.s); // 有字，不是空格和标点
+    const lone = tok.s.length === 1 && /[ぁ-ヿ]/.test(tok.s); // 孤零零一个假名被分成了「实词」（云フ 的 フ）：多半是前一个词的词尾，不另起短语
+    if (!word || latin || (tok.v && !tok.j && !lone)) g++; // 实词开头是新的短语；空格、标点、英文单词把短语断开
+    if (!tok.j) w++;                                       // 词尾（走っ+て+いる 里的后两段）和前面算同一个词
+    if (!word) continue;
+    if (latin) {
+      // 英文单词：字母本来就是一个接一个冒、到词尾一起落，不参与上面的「带着左边」
+      const a0 = ct[tok.i0], a1 = ct[tok.i0 + tok.s.length - 1];
+      const a = a0 && a1 ? amp(a1[1] - a0[0], syllables(tok.s), HOLD_MORA * HOLD_LATIN, HOLD_MIN * HOLD_LATIN) : 0;
+      if (a) for (let c = tok.i0; c < tok.i0 + tok.s.length; c++) if (ct[c]) plan.set(c, { a, t0: ct[c][0], t1: Math.min(a1[1], ct[c][0] + HOLD_CAP) });
+      g++;
+      continue;
+    }
+    let ci = tok.i0;
+    for (const seg of tok.segs) {
+      const c0 = ci, len = seg.t.length;
+      ci += len;
+      if (KANJI.test(seg.t) && seg.r) { push(Array.from({ length: len }, (_, k) => c0 + k), moraCount(seg.r) || len * 2); continue; }
+      for (let k = 0; k < len;) {
+        let e = k + 1;
+        while (e < len && SMALL_KANA.test(seg.t[e])) e++;
+        push(Array.from({ length: e - k }, (_, j) => c0 + k + j), KANJI.test(seg.t[k]) ? 2 : moraCount(seg.t[k]));
+        k = e;
+      }
+    }
+  }
+  units.forEach((T, i) => {
+    if (!T.own) return;
+    // 右边的尾巴：同一个短语里、紧跟着唱出来的；同样不把一个词拦腰截断（长音自己所在的词除外）
+    let hi = i;
+    while (hi + 1 < units.length && units[hi + 1].g === T.g && hi - i < HOLD_TAIL.max && units[hi + 1].t0 - T.t1 <= HOLD_TAIL.within) hi++;
+    if (hi + 1 < units.length && units[hi + 1].w === units[hi].w) {
+      const cut = units[hi].w;
+      if (cut === T.w) while (hi + 1 < units.length && units[hi + 1].w === cut) hi++;
+      else while (units[hi].w === cut) hi--;
+    }
+    const near = (n) => T.own * Math.max(HOLD_SPREAD.floor, 1 - HOLD_SPREAD.fade * n);
+    T.a = Math.max(T.a, T.own);
+    for (let j = i + 1; j <= hi; j++) units[j].a = Math.max(units[j].a, near(j - i));
+    let lo = i;
+    while (lo > 0 && units[lo - 1].g === T.g && i - lo < HOLD_SPREAD.max && T.t0 - units[lo - 1].t0 <= HOLD_SPREAD.within) lo--;
+    // 不把一个词拦腰截断：截在了词中间，就退到下一个词的开头；长音自己所在的那个词总是整个带上
+    if (lo > 0 && units[lo - 1].w === units[lo].w) {
+      const cut = units[lo].w;
+      if (cut === T.w) while (lo > 0 && units[lo - 1].w === cut) lo--;
+      else while (units[lo].w === cut) lo++;
+    }
+    for (let j = i - 1; j >= lo; j--) units[j].a = Math.max(units[j].a, near(i - j));
+  });
+  units.forEach((u, i) => {
+    if (!u.a) return;
+    const nx = units[i + 1];
+    const h = { a: u.a, t0: u.t0, t1: u.t1, q: !!nx?.a && nx.t0 - u.t1 <= HOLD_NEXT };
+    for (const c of u.cs) plan.set(c, h);
+  });
+  return plan;
+}
+// 强调的包络（0–1）。不是拼出来的「先升后降」两段曲线，而是一根不回弹的弹簧（临界阻尼）跟着一个目标走：
+// 唱到这个字时目标变成 1，唱完变回 0。于是起步和收尾都是缓的，中间没有突然加速的地方；
+// 音很短的话弹簧还没到顶就往回走，鼓包自然就小一些；落下去是一条越来越缓的尾巴，不会在某个时刻硬停。
+// τ（s.tau）是弹簧的快慢：过 3τ 走完八成，5τ 走完 96%。
+const HOLD_LEAD = 0.06;
+const settle = (x) => (x <= 0 ? 0 : 1 - (1 + x) * Math.exp(-x));
+function holdEnv(s, t) {
+  if (t <= s.h0 - HOLD_LEAD || t >= s.h1 + 12 * s.tau) return 0;
+  return Math.round((settle((t - s.h0 + HOLD_LEAD) / s.tau) - settle((t - s.h1) / s.tau)) * 500) / 500;
+}
+function paintHold(s, t) {
+  const e = holdEnv(s, t);
+  if (e === s.e) return;
+  s.e = e;
+  if (e) { s.el.style.setProperty('--e', e); if (!s.emon) { s.emon = true; s.el.classList.add('emon'); } }
+  else clearHold(s);
+}
+function clearHold(s) {
+  s.e = 0; s.emon = false;
+  s.el.classList.remove('emon');
+  s.el.style.removeProperty('--e');
+}
+// 换到下一句时，上一句最后那个长音可能还没落回去：留在这里接着落完
+let holdTail = [];
+
 // ---------------- 渲染歌词 ----------------
 function jpHTML(line, li) {
   if (line.gap) return '<span class="dots"><span class="dots-g"><i></i><i></i><i></i></span></span>';
   let html = '';
+  const hold = holdPlan(line);
   line.tokens.forEach((tok, ti) => {
     let ci = tok.i0, inner = '';
     tok.segs.forEach((seg, si) => {
@@ -186,14 +338,17 @@ function jpHTML(line, li) {
       //   - 带注音的汉字：整个汉字连同上面的假名是一个单位（拆开的话注音就跟不上了）
       // --lt：抬起来的弹簧动画总共多长。弹簧起步慢、收尾长，所以取这个字时长的两倍多，
       // 最短也有 0.75 秒：相邻的字一个还没抬完、下一个已经起步，叠在一起才不显得一格一格的
-      const unit = (t0, t1) => ` data-t0="${t0}" data-t1="${t1}" style="--lt:${clamp((t1 - t0) * 2.6, 0.75, 1.6).toFixed(2)}s"`;
+      const unit = (t0, t1, c) => {
+        const h = hold.get(c);
+        return ` data-t0="${t0}" data-t1="${t1}"${h ? ` data-em="${h.a.toFixed(2)},${h.t0},${h.t1},${h.q ? 1 : 0}"` : ''} style="--lt:${clamp((t1 - t0) * 2.6, 0.75, 1.6).toFixed(2)}s"`;
+      };
       let chars = '';
       for (const ch of seg.t) {
         const tm = !ruby && line.ct?.[ci];
-        chars += `<span class="ch${tm ? ' fu' : ''}" data-c="${ci}"${tm ? unit(tm[0], tm[1]) : ''}>${esc(ch)}</span>`;
+        chars += `<span class="ch${tm ? ' fu' : ''}" data-c="${ci}"${tm ? unit(tm[0], tm[1], ci) : ''}>${esc(ch)}</span>`;
         ci += ch.length;
       }
-      const whole = ruby && line.ct?.[c0] ? unit(line.ct[c0][0], (line.ct[ci - 1] || line.ct[c0])[1]) : '';
+      const whole = ruby && line.ct?.[c0] ? unit(line.ct[c0][0], (line.ct[ci - 1] || line.ct[c0])[1], c0) : '';
       const cls = `seg${isK ? ' k' : ''}${whole ? ' fu' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
       inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}<rt>${esc(seg.r)}</rt></ruby>` : chars}</span>`;
     });
@@ -281,13 +436,16 @@ function setActive(i) {
   hideSensePop();
   const apply = () => {
     const els = elScroll.children, a = Math.max(i, 0);
-    const vis = S.vis, va = vis[a] || 0, inGap = !!S.lines[a]?.gap; // 正在间奏：三个点自己算一行
+    const vis = S.vis, inGap = !!S.lines[a]?.gap; // 正在间奏：三个点自己算一行
+    const [ga] = (i >= 0 && S.grp?.[a]) || [a]; // 当前句所在的那一组从哪句开始（实验功能 2）；平时就是当前句自己
     for (let k = 0; k < els.length; k++) {
       const el = els[k];
       // 只改状态真的变了的行：离当前行 6 行以外的样子都一样
       const st = k === i ? 2 : k < i ? 1 : 0;
-      const d = k === a ? 0 : Math.min(Math.abs(vis[k] - va) + (inGap && k < a ? 1 : 0), 6);
+      const co = k < i && k >= ga; // 同组里前面唱过的句子：继续亮着，和当前句一样清楚。后面还没唱到的不提前亮
+      const d = k >= ga && k <= a ? 0 : Math.min((k < ga ? vis[ga] - vis[k] : vis[k] - vis[a]) + (inGap && k < a ? 1 : 0), 6);
       if (el._st !== st) { el._st = st; el.classList.toggle('active', st === 2); el.classList.toggle('past', st === 1); }
+      if (el._co !== co) { el._co = co; el.classList.toggle('co', co); }
       if (el._d !== d) { el._d = d; el.style.setProperty('--d', d); }
     }
     renderFocus();
@@ -298,6 +456,10 @@ function setActive(i) {
 }
 function collectFill() {
   const line = S.lines[S.active];
+  // 上一句里还没落回去的长音：还在页面上的留着接着落，其余的直接复位
+  const fx = prefs.fxHold && !noMotion.matches;
+  for (const s of [...holdTail, ...(S.fill?.segs || [])]) if (s.em && s.e && !(fx && s.el.isConnected)) clearHold(s);
+  holdTail = [...holdTail, ...(S.fill?.segs || [])].filter((s) => s.em && s.e);
   S.fill = null;
   if (!line) return;
   const root = prefs.view === 'focus' ? $('#f-cur') : elScroll.children[S.active];
@@ -306,8 +468,17 @@ function collectFill() {
   else if (line.ct) {
     S.fill = { segs: $$('.fu', root).map((el) => {
       el.classList.remove('on');
-      return { el, t0: +el.dataset.t0, t1: +el.dataset.t1, d: Math.max(0.05, el.dataset.t1 - el.dataset.t0), p: -1, on: false };
+      const s = { el, t0: +el.dataset.t0, t1: +el.dataset.t1, d: Math.max(0.05, el.dataset.t1 - el.dataset.t0), p: -1, on: false };
+      const old = holdTail.find((x) => x.el === el); // 同一句重新收集（切换显示方式等）：接着原来的状态
+      if (fx && el.dataset.em) {
+        const [a, h0, h1, q] = el.dataset.em.split(',').map(Number), hd = Math.max(0.05, h1 - h0);
+        // 弹簧的快慢：短的音快一点，长的慢一点；后面紧跟着别的字的（波浪里的）比这一段的最后一个快，好给后面的让位
+        Object.assign(s, { em: true, h0, h1, tau: q ? clamp(hd * 0.3, 0.1, 0.14) : clamp(hd * 0.2, 0.11, 0.22), e: old?.e || 0, emon: !!old?.emon });
+        el.style.setProperty('--ea', a);
+      } else if (old) clearHold(old);
+      return s;
     }) };
+    holdTail = holdTail.filter((x) => !S.fill.segs.some((s) => s.el === x.el));
   }
 }
 
@@ -319,7 +490,8 @@ let freeTimer = 0;
 let glideAnims = [];
 function jumpToActive() {
   if (prefs.view !== 'apple' || elScroll.classList.contains('free')) return;
-  const el = elScroll.children[Math.max(S.active, 0)];
+  const a = Math.max(S.active, 0);
+  const el = elScroll.children[S.active >= 0 ? S.grp?.[a]?.[0] ?? a : a]; // 一组紧凑的句子：对准这一组的第一句，组里换句时不滚动
   if (el) elScroll.scrollTop = el.offsetTop - elScroll.clientHeight * 0.3;
 }
 // 视口上下各多看 pad 像素，返回这一段里的行的下标范围
@@ -448,10 +620,12 @@ function tick() {
   const t = pos - S.offset;
   const i = findActive(t);
   if (i !== S.active) setActive(i);
+  if (holdTail.length) { for (const s of holdTail) paintHold(s, t); holdTail = holdTail.filter((s) => s.e); }
   const f = S.fill;
   if (!f) return;
   if (f.gap) return paintDots(f, t);
   for (const s of f.segs) {
+    if (s.em) paintHold(s, t);
     // 填充进度：唱过的和还没唱到的词不会变，实际每帧只会改到正在唱的那一两个
     const p = t <= s.t0 ? 0 : t >= s.t1 ? 1 : Math.round((t - s.t0) / s.d * 200) / 200;
     if (p !== s.p) { s.p = p; s.el.style.setProperty('--p', p); }
@@ -572,7 +746,11 @@ function chipHTML(a) {
 const EDIT_NEAR = 2;
 function annLines() {
   const out = new Set();
-  if (!S.mode || prefs.view !== 'apple' || !prefs.ann || S.active === -2) return out;
+  if (prefs.view !== 'apple' || !prefs.ann || S.active === -2) return out;
+  // 实验功能 2：一组紧凑的句子一起显示时，组里上面已经唱过的那几句的标注留着，不收起来
+  const g = S.active >= 0 && S.grp?.[S.active];
+  if (g) for (let k = g[0]; k < S.active; k++) out.add(k);
+  if (!S.mode) return out;
   if (S.mode === 'dict') {
     S.lines.forEach((l, k) => { if (!l.gap && k !== S.active) out.add(k); });
     return out;
@@ -638,7 +816,7 @@ function paintAnnotations() {
     S.annsByLine.set(k, list);
     const box = $('.ann', nel);
     if (box.classList.contains('leaving')) { box.classList.remove('leaving'); box._html = null; }
-    setAnn(box, list.map(chipHTML).join(''));
+    setAnn(box, prefs.annStyle === 'underline' && !S.mode ? '' : list.map(chipHTML).join(''));
     if (!nel.classList.contains('ann-on')) nel.classList.add('ann-on');
   }
   for (const { old, box, w, seen } of leaving) {
@@ -1848,6 +2026,8 @@ async function openSettings() {
   $('#set-source').value = prefs.annSource;
   $('#set-lang').value = prefs.meaningLang;
   $('#set-autosense').checked = prefs.autoSense !== false;
+  $('#set-fx-hold').checked = !!prefs.fxHold;
+  $('#set-fx-group').checked = !!prefs.fxGroup;
   const picked = Object.keys(S.senses || {}).length;
   $('#set-clear-senses').hidden = !picked;
   $('#set-clear-senses').textContent = `清除这首歌里手动选的 ${picked} 个`;
@@ -1891,6 +2071,8 @@ $('#set-clear-senses').addEventListener('click', async () => {
   paintAnnotations();
   toast('已清除，这首歌的多义词恢复自动选义');
 });
+$('#set-fx-hold').addEventListener('change', (e) => { prefs.fxHold = e.target.checked; savePrefs(); collectFill(); });
+$('#set-fx-group').addEventListener('change', (e) => { prefs.fxGroup = e.target.checked; savePrefs(); markGroups(); if (S.lines.length && S.active > -2) setActive(S.active); });
 for (const id of ['set-style', 'set-max', 'set-grammar', 'set-vocabs', 'set-source', 'set-lang', 'set-autosense', 'set-levels']) $(`#${id}`).addEventListener('input', onAnnPrefChange);
 async function saveSettings() {
   const body = { model: $('#set-model').value.trim() };
