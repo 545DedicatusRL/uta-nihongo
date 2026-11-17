@@ -1294,7 +1294,7 @@ $('#rp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#r
 // ---------------- 资料库 ----------------
 // all = 整个资料库；tracks = 现在这份列表的来源（整个资料库，或某个播放列表）
 // view = 列表里现在放的是什么：'tracks' 歌曲 / 'albums' 专辑；album = 点进去的那张专辑
-const lib = { all: null, tracks: null, byPid: null, loading: false, shown: 0, filtered: [], view: 'tracks', album: null, back: null, marks: {} };
+const lib = { all: null, tracks: null, byPid: null, loading: false, shown: 0, filtered: [], view: 'tracks', album: null, back: null, marks: {}, top: 0 };
 // 「仅日文」的判断。元数据里没有语言字段，只能靠线索推断：
 //   1. 流派是日本的（Anime、J-Pop、歌謡曲…）
 //   2. 歌名 / 歌手名里有假名
@@ -1349,7 +1349,8 @@ function applyJa() {
 async function openLibrary() {
   $('#library').hidden = false;
   $('#lib-search').focus();
-  if (lib.tracks || lib.loading) return renderLibrary();
+  // 再次打开：回到上次划到的位置（抽屉收起时浏览器不会替我们记着滚动位置，所以自己记在 lib.top 里）
+  if (lib.tracks || lib.loading) { const top = lib.top; renderLibrary(true); $('#lib-list').scrollTop = top; return; }
   lib.loading = true;
   $('#lib-list').innerHTML = '<div class="empty">正在读取 Apple Music 资料库…</div>';
   try {
@@ -1560,7 +1561,7 @@ $('#lib-list').addEventListener('mousemove', (e) => {
 });
 $('#lib-list').addEventListener('mouseleave', () => setNear(null));
 $('#lib-list').addEventListener('scroll', () => setNear(null), { passive: true }); // 滚动时鼠标底下换了一行
-$('#lib-list').addEventListener('scroll', (e) => { const el = e.target; if (el.scrollTop + el.clientHeight > el.scrollHeight - 400 && lib.shown < lib.filtered.length) moreLibrary(); });
+$('#lib-list').addEventListener('scroll', (e) => { const el = e.target; if (!$('#library').hidden) lib.top = el.scrollTop; if (el.scrollTop + el.clientHeight > el.scrollHeight - 400 && lib.shown < lib.filtered.length) moreLibrary(); });
 $('#lib-list').addEventListener('click', (e) => {
   const al = e.target.closest('.album');
   if (al) return openAlbum(lib.filtered[+al.dataset.album]);
