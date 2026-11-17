@@ -211,7 +211,8 @@ function setArt(track, cover) {
 }
 
 // ---------------- 实验功能：长音强调 ----------------
-// 逐字歌词里拖得很长的音，唱到时会放大、发光、往外「冒」一下，唱完再缓缓落回去；拖得越长，冒得越明显、停得越久。
+// 逐字歌词里拖得很长的音，唱到时会放大、发光、往外「冒」一下，再缓缓落回去；拖得越长，冒得越明显。
+// 冒起来以后最多在上面停 HOLD_MAX 秒：音再长也是到点就落，不陪着它一直撑到唱完（撑太久显得拖）。
 // 一、哪个音算长音。看的是「拖了多久」= 这一段的时长 −（音数 − 1）× 平常一个音的时长：
 //   - 假名：一个假名一个音，拖了多久就是它自己的时长；小写的ゃゅょ等和前一个假名算同一个音
 //   - 带注音的汉字：按读音的音数算（「色褪」いろあ = 3 个音，1.5 秒里有两个音是平常地唱过去的，剩下的 1 秒是拖的）；
@@ -225,7 +226,7 @@ function setArt(track, cover) {
 //     碰到这样的字就到此为止，不跳过它接着往外带——中间空一个不动的字，两边各冒各的，看着是散的
 //   这里的「字」是能冒起来的最小单位：一个假名（连同后面的小写假名），或者一段带注音的汉字。
 //   每个字只在自己被唱着的时候停在上面：下一个字起来时它就很快落下去，所以看上去是一个鼓包从左往右走，
-//   走到长音那里停住，长音唱完再缓缓落下。离长音越远幅度越小。
+//   走到长音那里停一下（最多 HOLD_MAX 秒）再缓缓落下。离长音越远幅度越小。
 // 三、独立的助词不参与。は、が、を、に、で、の、も、から、だけ 这类跟在词后面的助词：自己拖得再长也不冒，
 //   也不会被旁边的长音带起来，鼓包走到它这里就停（「星座が」只有 星座 冒，が 不动；が 后面的词是另一个短语）。
 //   歌里句尾的助词常常是拖着唱的，全算上的话到处都在冒。是不是助词看分词器给的词性，不看字面（「はな」的 は 不是）。
@@ -236,6 +237,7 @@ const HOLD_MORA = 0.25; // 平常唱歌一个音大约多长（秒）
 const HOLD_MIN = 0.8;   // 至少拖这么久才算长音
 const HOLD_FULL = 1.9;  // 拖到这么久效果就到顶了
 const HOLD_LATIN = 1.3; // 英文音节本来就比日语的一个音长，门槛按这个倍数放宽
+const HOLD_MAX = 0.5;   // 冒起来以后最多停多久（秒），到点就开始落，哪怕这个音还没唱完
 const HOLD_CAP = 4;     // 一个音最多按这么久算：再长多半是歌词时间把间奏也算进去了
 const HOLD_SPREAD = { max: 3, within: 1.2, fade: 0.08, floor: 0.6, min: 0.11 }; // 往左带几个字、最多隔多久（秒）、每远一个字弱多少、最弱到多少、被带的字（左右都算）至少唱多久
 const HOLD_NEXT = 0.3; // 唱完后这么久以内紧接着又有字冒起来：这个字要快点落，给后面的让位
@@ -270,7 +272,7 @@ function holdPlan(line) {
       // 英文单词：字母本来就是一个接一个冒、到词尾一起落，不参与上面的「带着左边」
       const a0 = ct[tok.i0], a1 = ct[tok.i0 + tok.s.length - 1];
       const a = a0 && a1 ? amp(a1[1] - a0[0], syllables(tok.s), HOLD_MORA * HOLD_LATIN, HOLD_MIN * HOLD_LATIN) : 0;
-      if (a) for (let c = tok.i0; c < tok.i0 + tok.s.length; c++) if (ct[c]) plan.set(c, { a, t0: ct[c][0], t1: Math.min(a1[1], ct[c][0] + HOLD_CAP) });
+      if (a) for (let c = tok.i0; c < tok.i0 + tok.s.length; c++) if (ct[c]) plan.set(c, { a, t0: ct[c][0], t1: Math.min(a1[1], ct[c][0] + HOLD_MAX) });
       g++;
       continue;
     }
@@ -298,7 +300,8 @@ function holdPlan(line) {
   units.forEach((u, i) => {
     if (!u.a) return;
     const nx = units[i + 1];
-    const h = { a: u.a, t0: u.t0, t1: u.t1, q: !!nx?.a && nx.t0 - u.t1 <= HOLD_NEXT };
+    const t1 = Math.min(u.t1, u.t0 + HOLD_MAX); // 什么时候开始落：唱完，或者停够了
+    const h = { a: u.a, t0: u.t0, t1, q: !!nx?.a && nx.t0 - t1 <= HOLD_NEXT };
     for (const c of u.cs) plan.set(c, h);
   });
   return plan;
@@ -485,7 +488,7 @@ function collectFill() {
       if (fx && el.dataset.em) {
         const [a, h0, h1, q] = el.dataset.em.split(',').map(Number), hd = Math.max(0.05, h1 - h0);
         // 弹簧的快慢：短的音快一点，长的慢一点；后面紧跟着别的字的（波浪里的）比这一段的最后一个快，好给后面的让位
-        Object.assign(s, { em: true, h0, h1, tau: q ? clamp(hd * 0.3, 0.1, 0.14) : clamp(hd * 0.2, 0.11, 0.22), e: old?.e || 0, emon: !!old?.emon });
+        Object.assign(s, { em: true, h0, h1, tau: q ? clamp(hd * 0.3, 0.1, 0.14) : clamp(hd * 0.3, 0.11, 0.15), e: old?.e || 0, emon: !!old?.emon });
         el.style.setProperty('--ea', a);
       } else if (old) clearHold(old);
       return s;
