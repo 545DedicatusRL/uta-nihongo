@@ -369,9 +369,9 @@ function jpHTML(line, li) {
       const ruby = isK && !!seg.r;
       // 逐字歌词里的「填充单位」（class="fu"）：按时间填色、唱到时抬起来的最小单位。
       //   - 普通的字：一个字一个单位，于是一个词里的字是一个接一个抬起来的，像一道波
-      //   - 带注音的汉字：整个汉字连同上面的假名是一个单位（拆开的话注音就跟不上了）
-      //   - 实验功能「长音强调」开着时，几个汉字连在一起的（宝物）按字拆开：每个汉字一个单位，注音里属于它的那几个假名
-      //     包成一个 .rk，由 app.js 让它跟着这个汉字一起变亮、抬起（collectFill 里配对）。注音的排版不变，还是整段居中
+      //   - 带注音的单个汉字（以及读音没法按字分的一段汉字）：汉字连同上面的假名是一个单位
+      //   - 几个汉字连在一起的（宝物）按字拆开：每个汉字一个单位，注音里属于它的那几个假名包成一个 .rk，
+      //     由 app.js 让它跟着这个汉字一起变亮、抬起（collectFill 里配对）。注音的排版不变，还是整段居中
       // --lt：抬起来的弹簧动画总共多长。弹簧起步慢、收尾长，所以取这个字时长的两倍多，
       // 最短也有 0.75 秒：相邻的字一个还没抬完、下一个已经起步，叠在一起才不显得一格一格的
       const lt = (t0, t1) => `style="--lt:${clamp((t1 - t0) * 2.6, 0.75, 1.6).toFixed(2)}s"`;
@@ -379,7 +379,7 @@ function jpHTML(line, li) {
         const h = hold.get(c);
         return ` data-t0="${t0}" data-t1="${t1}"${h ? ` data-em="${h.a.toFixed(2)},${h.t0},${h.t1},${h.q ? 1 : 0}"` : ''} ${lt(t0, t1)}`;
       };
-      const parts = ruby && prefs.fxHold ? kanjiParts(line, seg, c0) : null;
+      const parts = ruby ? kanjiParts(line, seg, c0) : null;
       let chars = '', rks = '';
       if (parts) for (const p of parts) {
         chars += `<span class="ch fu" data-c="${p.c}"${unit(p.tm[0], p.tm[1], p.c)}>${esc(p.ch)}</span>`;
@@ -412,19 +412,6 @@ function renderLines() {
   let n = 0;
   S.vis = S.lines.map((line) => (line.gap ? n : ++n));
   paintSelection();
-}
-
-// 逐字歌词的字重新画一遍（「长音强调」开关变了：汉字要不要按字拆开不一样），别的都不动
-function redrawTimed() {
-  $$('#scroll .line.timed').forEach((el) => {
-    const li = +el.dataset.i, jp = $('.jp', el);
-    if (jp && S.lines[li]) jp.innerHTML = jpHTML(S.lines[li], li);
-  });
-  if (!S.lines.length || S.active === -2) return;
-  renderFocus();
-  paintAnnotations();
-  paintSelection();
-  collectFill();
 }
 
 function renderFocus() {
@@ -2241,7 +2228,7 @@ $('#set-clear-senses').addEventListener('click', async () => {
   paintAnnotations();
   toast('已清除，这首歌的多义词恢复自动选义');
 });
-$('#set-fx-hold').addEventListener('change', (e) => { prefs.fxHold = e.target.checked; savePrefs(); redrawTimed(); });
+$('#set-fx-hold').addEventListener('change', (e) => { prefs.fxHold = e.target.checked; savePrefs(); collectFill(); });
 $('#set-fx-group').addEventListener('change', (e) => { prefs.fxGroup = e.target.checked; savePrefs(); markGroups(); if (S.lines.length && S.active > -2) setActive(S.active); });
 for (const id of ['set-style', 'set-max', 'set-grammar', 'set-vocabs', 'set-source', 'set-lang', 'set-autosense', 'set-levels']) $(`#${id}`).addEventListener('input', onAnnPrefChange);
 async function saveSettings() {

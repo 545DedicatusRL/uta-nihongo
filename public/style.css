@@ -182,7 +182,7 @@ ruby { ruby-align: center; }
   scale: calc(1 + .14 * var(--ea, 1) * var(--e, 0)); translate: 0 calc(-.05em * var(--e, 0));
   filter: drop-shadow(0 0 calc(.24em * var(--e, 0)) rgba(255, 255, 255, calc(.8 * var(--ea, 1) * var(--e, 0)))); }
 .dict-mode .timed .fu.emon, .edit-mode .timed .fu.emon { scale: none; translate: none; filter: none; }
-/* 按字拆开的汉字（长音强调开着时，见 app.js 的 jpHTML）：.rk 是注音里属于某一个汉字的那几个假名。
+/* 按字拆开的汉字（几个汉字连在一起的，见 app.js 的 jpHTML）：.rk 是注音里属于某一个汉字的那几个假名。
    它不在那个汉字的 .fu 里面，所以 --p / --e / --ea 和 .on / .emon 由 app.js 照着那个汉字同步设过来，这里照着 .fu 的样子再写一遍。
    长度都是按注音的字号算的（注音是正文的 .42 倍）；强调时汉字是绕着自己的中下部放大的，顶边会往上顶，注音要多让出这一截 */
 /* 行高要压住，不然这一行会比不拆的时候高：汉字和 .rk 都成了 inline-block，各自带着一整行的行高，
