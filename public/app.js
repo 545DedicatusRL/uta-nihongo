@@ -1438,7 +1438,9 @@ function editClick(e) {
   $('#rp-seg').textContent = seg.t;
   $('#rp-input').value = seg.r || '';
   const from = { roma: '已按歌词源的罗马音自动纠正', qq: '已按 QQ 音乐的注音自动纠正', user: '你修改过这个读音' }[seg.src];
-  $('#rp-info').textContent = [from, seg.auto ? `词典读音：${seg.auto}` : ''].filter(Boolean).join('　') || '词典自动标注';
+  // 词典读音可以点：自动纠正纠错了的时候，点一下就改回词典的读音（按下面选的范围保存）
+  const dict = seg.auto && seg.auto !== seg.r ? `词典读音：<button class="rp-auto" data-r="${esc(seg.auto)}" title="点一下改用词典读音">${esc(seg.auto)}</button>` : '';
+  $('#rp-info').innerHTML = [from ? esc(from) : '', dict].filter(Boolean).join('　') || '词典自动标注';
   $('#rp-reset').hidden = seg.src !== 'user';
   $('input[name=rp-scope][value=here]').checked = true;
   $('#reading-pop').hidden = false;
@@ -1530,6 +1532,7 @@ $('#rp-save').addEventListener('click', () => {
   saveReading(v);
 });
 $('#rp-reset').addEventListener('click', () => saveReading(null));
+$('#rp-info').addEventListener('click', (e) => { const b = e.target.closest('.rp-auto'); if (b) saveReading(b.dataset.r); });
 $('#rp-cancel').addEventListener('click', endReading);
 // 边输入，字上面的假名边跟着变
 $('#rp-input').addEventListener('input', () => {

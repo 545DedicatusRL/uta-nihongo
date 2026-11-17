@@ -456,6 +456,8 @@ select { appearance: none; -webkit-appearance: none; padding-right: 30px;
 #rp-input { font: 18px var(--font-ja); width: 100%; }
 #reading-pop { left: 0; top: 0; will-change: translate; } /* 位置由 translate 给：跟着正在改的那个字走 */
 .rp-scope { display: flex; gap: 14px; color: var(--fg-2); font-size: 12.5px; }
+.rp-auto { font: inherit; font-family: var(--font-ja); color: var(--fg); padding: 1px 8px; border-radius: 999px; background: rgba(255, 255, 255, .1); border: 1px solid var(--line); transition: background .15s; }
+.rp-auto:hover { background: rgba(255, 255, 255, .2); }
 
 .modal { position: fixed; inset: 0; z-index: 40; background: rgba(10, 8, 16, .55); display: grid; place-items: center; padding: 20px; }
 .modal-card { width: min(640px, 100%); max-height: min(86vh, 760px); background: var(--panel); border: 1px solid var(--line); border-radius: 16px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 70px rgba(0, 0, 0, .6); }
