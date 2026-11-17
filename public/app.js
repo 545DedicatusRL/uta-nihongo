@@ -979,6 +979,10 @@ function setMode(mode) {
   $('#reading-pop').hidden = true;
   tip.hidden = true;
   hideSensePop();
+  // 进出模式时各行的高矮全变了（记词模式下整首歌的标注都展开），之前自己划到的位置已经对不上任何东西：
+  // 结束「自己划走了」的状态，下面才会回到正在唱的那一句。不然刚划过又马上进出模式，页面会停在一个不相干的地方
+  clearTimeout(freeTimer);
+  elScroll.classList.remove('free');
   // 进出模式会改变各行的高矮（修改模式下前后几句的标注展开 / 收起）：
   // 这些变化都放在 glide 里做，各行从原来的位置顺着滑到新位置，而不是跳过去
   glide(() => {
