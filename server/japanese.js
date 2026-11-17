@@ -471,12 +471,13 @@ function fixSuru(raw) {
 // 可歌词里它几乎都是「いる + た + んだ」（在、一直…着）：真要写「痛んだ」多半会用汉字。
 // 所以假名的 いたん 后面跟着 だ / で / じゃ 时拆成 い（いる）+ た + ん；只有前面明摆着是会疼、会坏的东西
 // （胸がいたんだ、心がいたんで）才留给「痛む」。汉字写的不动。
+// 后面是「た」的（いたんた）也算：「痛む」后面只能是 だ，这只可能是歌词把 いたんだ 打错了。
 const ITAMU_SUBJECT = new Set(['胸', '心', '傷', '頭', '体', '身体', '足', '脚', '腕', '手', '指', '歯', '腹', 'お腹', '目', '耳', '喉', '背中', '腰', '傷口', '古傷', '傷跡', '髪', '肌', 'こころ', 'むね', 'きず', 'からだ']);
 function fixIta(raw) {
   const out = [];
   raw.forEach((t, i) => {
     const next = raw[i + 1], prev = raw[i - 1];
-    const nda = next && ((next.pos === '助動詞' && next.basic_form === 'だ') || (next.pos === '助詞' && /^(で|じゃ)$/.test(next.surface_form)));
+    const nda = next && ((next.pos === '助動詞' && /^(だ|た)$/.test(next.basic_form)) || (next.pos === '助詞' && /^(で|じゃ)$/.test(next.surface_form)));
     if (!(t.surface_form === 'いたん' && t.basic_form === 'いたむ' && nda)) {
       // 上面拆出来的 ん 后面的 だ 是判断的「だ」，不再是「た」的浊音
       const afterN = out.length && out[out.length - 1].ita && t.pos === '助動詞' && t.basic_form === 'だ';
