@@ -36,6 +36,20 @@ const DEFAULT_PREFS = {
 let prefs = { ...DEFAULT_PREFS };
 try { const saved = JSON.parse(localStorage.getItem('uta-prefs') || '{}'); prefs = { ...prefs, ...saved, levels: { ...prefs.levels, ...(saved.levels || {}) } }; } catch { /* 无痕模式等 */ }
 const savePrefs = () => { try { localStorage.setItem('uta-prefs', JSON.stringify(prefs)); } catch { /* 忽略 */ } };
+// 韩语歌的小照顾：罗马音没开的话，放韩语歌时临时打开，换到别的歌再收回去。
+// 不改设置本身（prefs.roma），所以放到一半退出也不会留下一个不知道谁打开的罗马音；这期间手动点了开关，就按手动的来。
+// 判断从简：流派是 K-Pop / Korean，或者歌名、歌手、专辑里有韩文。
+let romaAuto = false;
+const HANGUL = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/;
+const isKorean = (t) => /k-?pop|korean/i.test(t.genre || lib.byPid?.get(t.pid)?.genre || '') || HANGUL.test(`${t.name} ${t.artist} ${t.album}`);
+function autoRoma(track) {
+  const want = !prefs.roma && isKorean(track);
+  if (want === romaAuto) return;
+  romaAuto = want;
+  applyPrefs();
+}
+// 显示开关现在是不是开着：罗马音除了设置，还有上面的临时打开
+const isOn = (k) => (k === 'roma' ? prefs.roma || romaAuto : !!prefs[k]);
 
 // ---------------- 状态 ----------------
 const S = {
@@ -107,6 +121,7 @@ function songURL(t, extra = '') {
 async function loadSong(track, { refresh = false, keep = false } = {}) {
   const token = ++S.loadToken;
   S.track = track;
+  if (!keep) autoRoma(track);
   $('#title').textContent = track.name;
   $('#artist').textContent = [track.artist, track.album].filter(Boolean).join(' — ');
   if (!keep) {
@@ -2296,8 +2311,8 @@ function applyPrefs() {
   app.classList.toggle('view-apple', prefs.view === 'apple');
   app.classList.toggle('view-focus', prefs.view === 'focus');
   for (const k of ['furi', 'zh', 'roma', 'ann']) {
-    app.classList.toggle(`no-${k}`, !prefs[k]);
-    $(`[data-toggle=${k}]`).classList.toggle('on', prefs[k]);
+    app.classList.toggle(`no-${k}`, !isOn(k));
+    $(`[data-toggle=${k}]`).classList.toggle('on', isOn(k));
   }
   $$('[data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === prefs.view));
   $('#db-char').checked = prefs.dictChar; $('#db-pause').checked = prefs.dictPause;
@@ -2308,9 +2323,37 @@ function setView(v) {
   requestAnimationFrame(() => scrollToActive(true));
 }
 $$('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+// 显示开关（假名 / 中文翻译 / 罗马音 / 标注）切换时的过渡：
+//   关：屏幕上看得见的那些先原地淡出（这时还占着位置），淡完再真的收起，其余各行滑到新位置
+//   开：各行先滑开腾出位置，新出现的跟着淡入
+const TOGGLE_SEL = { furi: 'rt', zh: '.zh', roma: '.roma', ann: '.ann, #f-ann' };
+function animateToggle(k) {
+  const on = isOn(k);
+  $(`[data-toggle=${k}]`).classList.toggle('on', on); // 菜单里的勾马上变，不等动画
+  const place = () => {
+    applyPrefs(); paintAnnotations();
+    if (prefs.view === 'apple' && !elScroll.classList.contains('free')) jumpToActive();
+  };
+  if (noMotion.matches || document.hidden || !S.lines.length) return place();
+  const targets = () => {
+    if (prefs.view !== 'apple') return $$(TOGGLE_SEL[k], $('#focus-inner'));
+    const [lo, hi] = visibleRange(0), out = [];
+    for (let i = lo; i <= hi; i++) out.push(...$$(TOGGLE_SEL[k], elScroll.children[i]));
+    return out;
+  };
+  if (on) {
+    glide(place);
+    for (const el of targets()) el.animate([{ opacity: 0 }, {}], { duration: 420, delay: 140, easing: 'ease-out', fill: 'backwards' });
+  } else {
+    const fades = targets().map((el) => el.animate([{}, { opacity: 0 }], { duration: 200, easing: 'ease-in', fill: 'forwards' }));
+    setTimeout(() => { glide(place); for (const a of fades) a.cancel(); }, 200);
+  }
+}
 $$('[data-toggle]').forEach((b) => b.addEventListener('click', () => {
-  prefs[b.dataset.toggle] = !prefs[b.dataset.toggle]; savePrefs(); applyPrefs(); paintAnnotations();
-  requestAnimationFrame(() => scrollToActive(true));
+  const k = b.dataset.toggle, on = !isOn(k);
+  if (k === 'roma') romaAuto = false; // 手动点了：按手动的来，不再算临时打开
+  prefs[k] = on; savePrefs();
+  animateToggle(k);
 }));
 // 二级菜单：显示开关留在菜单里可连续切换；工具项点了就收起菜单
 function placeUnderMenuButton(pop) {

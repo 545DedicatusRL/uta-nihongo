@@ -34,6 +34,7 @@ function run() {
           s.pos = m.playerPosition();
           if (s.pid !== lastPid || tick % 20 === 0) {
             s.track = { pid: s.pid, name: t.name(), artist: t.artist(), album: t.album(), duration: t.duration() };
+            try { s.track.genre = t.genre(); } catch (e) {}
             lastPid = s.pid;
           }
         } else { lastPid = null; }
