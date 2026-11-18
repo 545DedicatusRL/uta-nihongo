@@ -2693,6 +2693,7 @@ const FX_MORPH = true; // 实验性的，不想要了改成 false：点封面没
 // 整句看上去会先挤一下再松开（还带着缩放），哪怕只有一两个像素也显得「弹」；封面单独留着回弹也不协调，就都去掉了
 const MORPH = springEasing(230, 30.4);
 let morphFus = null; // 飞着的那一份里的填色单位：飞的这半秒里逐字填色照常走（见 tick）
+let morphHover = null; // 封面飞完以后等鼠标动一下、好恢复悬停效果的那个监听
 const flatView = (v) => v === 'apple' || v === 'focus';
 $('#art-wrap').classList.toggle('go', FX_MORPH);
 // 资料库 / 词汇书开着的时候点到封面：那一下只是把抽屉收起来（mousedown 时已经收了），不切换样式
@@ -2755,6 +2756,16 @@ function morphView(to) {
   }
   const scroll0 = elScroll.scrollTop;
   // 换样式
+  // 封面飞的这一会儿不认鼠标悬停（原因见 style.css 的 .nohover）；飞完以后鼠标一动就恢复
+  artEl.classList.add('nohover');
+  document.removeEventListener('mousemove', morphHover);
+  morphHover = () => {
+    if (performance.now() < landed) return;
+    artEl.classList.remove('nohover');
+    document.removeEventListener('mousemove', morphHover);
+  };
+  const landed = performance.now() + MORPH.ms;
+  document.addEventListener('mousemove', morphHover);
   prefs.view = to; savePrefs(); applyPrefs();
   clearTimeout(freeTimer); elScroll.classList.remove('free');
   for (const an of glideAnims) an.cancel();
