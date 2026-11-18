@@ -124,6 +124,9 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 #morph-ghost #art-wrap, #morph-ghost #meta { visibility: hidden; }
 #morph-ghost #focus { overflow: visible; }
 #morph-ghost #f-cur { animation: none; }
+/* 替身是照着原来的画面抄的，抄出来的东西会把自带的「出现」动画从头再放一遍（标注先消失再浮现、间奏的点先消失）：
+   这些本来就在屏幕上，不该再放，否则切换的一开头它们会闪一下 */
+#morph-ghost .ann, #morph-ghost .dots { animation: none; }
 #morph-ghost .ul { position: fixed; height: 2px; pointer-events: none; } /* 飞行中每个字底下带着的那一小段标注线 */
 
 /* ---------- 歌词（滚动样式） ---------- */

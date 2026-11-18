@@ -2759,6 +2759,7 @@ function morphView(to) {
     F.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;text-align:${getComputedStyle(newLine).textAlign};`;
     $('.ann', F)?.remove();
     ghost.append(F);
+    const flying = [F]; // 飞的这一份连同它带着的标注线：落地时一起撤
     // 每个字要能单独挪动、缩放，得是 inline-block。这会让这一份的排版和真的那句有一点出入（比如折行的地方不同），
     // 所以不指望它，改完以后再量一遍每个字实际在哪（rest），起点和终点都按这个折算
     const us = unitsOf(F);
@@ -2793,6 +2794,7 @@ function morphView(to) {
           bar.className = 'ul';
           bar.style.cssText = `left:${b.left - 0.3}px;top:${top}px;width:${b.width + 0.6}px;background:var(--${color});`;
           ghost.append(bar); // 挂在最外层：那一句自己带着滤镜，里面的东西没法按屏幕坐标定位
+          flying.push(bar);
           // 起点：原来那个字底下同样的位置（那时字是现在的 k0 倍大，线也按这个倍数算）
           bar.animate([
             { transformOrigin: '0 0', translate: `${p.left + (b.left - q.left) * k0 - b.left}px ${y0[k] - 2 * (up + 1) * k0 - top}px`, scale: k0 },
@@ -2803,11 +2805,16 @@ function morphView(to) {
     }
     // 真的那一句（日文、罗马音、翻译）藏到落地为止；替身里原来那一句也藏起来，字正从那里飞走
     const gOld = toScroll ? $('#f-cur', ghost) : $('#scroll', ghost).children[a];
+    let hide = null;
     for (const sel of PARTS) {
-      $(sel, newLine)?.animate([{ opacity: 0 }, { opacity: 0 }], { duration: MORPH.ms });
+      hide = $(sel, newLine)?.animate([{ opacity: 0 }, { opacity: 0 }], { duration: MORPH.ms }) || hide;
       const g = gOld && $(sel, gOld);
       if (g) g.style.visibility = 'hidden';
     }
+    // 落地：真的那一句现出来的同一帧，把飞的这一份撤掉。两样不能同时在屏幕上——还没唱到的字、注音、翻译都是半透明的，
+    // 叠两层就亮了一截，撤掉一层又暗回去，看上去是整句闪了一下；实心的字叠两层边缘也会变粗一下。
+    // 「藏着」的动画结束时浏览器先发这个事件、再画这一帧，所以在这里撤正好是同一帧
+    if (hide) hide.onfinish = () => { for (const el of flying) el.remove(); };
     morphFus = { a, els: $$('.fu', F).map((el) => ({ el, rk: rkOf(el) })) };
   }
   if (toScroll) {
@@ -2825,7 +2832,7 @@ function morphView(to) {
     fadeOut(ghost.children[1]);
     for (const id of ['#f-prev', '#f-ann', '#f-next']) fadeIn($(id), 240);
   }
-  // 落地：真的那一句在动画结束的那一刻自己现出来；飞的那一份多留几帧再撤（两个完全重合，叠着看不出来；先撤的话会空一帧）
+  // 收尾：别的替身这时早就淡完了，连同外层一起撤掉（飞的那一份在落地的那一帧已经自己撤了，见上）
   setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].el.isConnected) morphFus = null; }, MORPH.ms + 60);
 }
 
