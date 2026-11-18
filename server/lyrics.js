@@ -1,4 +1,5 @@
 // 歌词获取：网易云音乐 / QQ 音乐。搜索 → 打分匹配 → 拉取歌词（原文 / 中文翻译 / 罗马音 / 逐字）。
+import { execFile } from 'node:child_process';
 import { readJSON, writeJSON, safeName } from './store.js';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -27,6 +28,47 @@ export function cleanTitle(s) {
 function norm(s) {
   return cleanTitle(s).normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 }
+// 标题里的附加说明：括号里的、「 - 」后面的。分两种：
+//   feat：合作者名单（feat. 宵崎奏, 朝比奈まふゆ & 鏡音レン）→ 按人名拆开、排好序，写法不同（, / & / 、）也能对上
+//   ver：其余的（Movie Ver.、Cover、From THE FIRST TAKE、Reloaded…）
+// 返回 { feat, ver }：各是一个规整过的字符串，没有就是 ''
+function titleTags(title) {
+  const feat = [], ver = [];
+  const take = (g) => {
+    const m = /^\s*(?:feat(?:uring)?|ft|with)[.．]?\s+(.+)$/i.exec(g);
+    if (m) feat.push(...m[1].split(/\s*(?:,|，|、|&|＆|\/|×|\s+and\s+|\s+x\s+)\s*/i).map(norm).filter(Boolean));
+    else if (norm(g)) ver.push(norm(g));
+  };
+  let rest = String(title || '').replace(/[\(（\[【]([^\)）\]】]*)[\)）\]】]/g, (_, g) => { take(g); return ' '; });
+  const dash = rest.split(/\s+[-–—]\s+/);
+  for (const g of dash.slice(1)) take(g);
+  return { feat: feat.sort().join('|'), ver: ver.sort().join('|') };
+}
+// 两个专辑名有没有「一定的重合」：最长的相同片段够长（汉字假名 2 个字、字母数字 5 个），而且占短的那个名字的四成以上
+function albumOverlap(a, b) {
+  a = norm(a); b = norm(b);
+  if (!a || !b) return false;
+  let best = 0, end = 0, prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = new Array(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) if (a[i - 1] === b[j - 1]) { cur[j] = prev[j - 1] + 1; if (cur[j] > best) { best = cur[j]; end = i; } }
+    prev = cur;
+  }
+  const common = a.slice(end - best, end);
+  const need = HAS_CJK.test(common) ? 2 : 5;
+  return best >= need && best >= Math.min(a.length, b.length) * 0.4;
+}
+// 繁体 → 简体（一次转一批）。用系统自带的转换，不另带字表；转不了（不是 macOS、超时）就原样返回
+function toSimplified(list) {
+  return new Promise((resolve) => {
+    const script = "ObjC.import('Foundation'); function run(argv) { return $(argv[0]).stringByApplyingTransformReverse('Hant-Hans', false).js; }";
+    execFile('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script, list.join('\n')], { timeout: 4000 }, (err, out) => {
+      const got = err ? [] : String(out).replace(/\n$/, '').split('\n');
+      resolve(got.length === list.length ? got : list);
+    });
+  });
+}
+
 function decodeEntities(s) {
   return s
     .replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&')
@@ -88,14 +130,20 @@ async function lookupJapaneseName(track) {
   for (const r of j.results || []) {
     const diff = Math.abs((r.trackTimeMillis || 0) / 1000 - (track.duration || 0));
     if (track.duration && diff > 2.5) continue;
-    if (!best || diff < best.diff) best = { diff, title: r.trackName, artist: r.artistName };
+    if (!best || diff < best.diff) best = { diff, title: r.trackName, artist: r.artistName, album: r.collectionName || '' };
   }
   return best;
 }
 
+// 打分（满分大致 100 出头）：
+//   歌名 完全相同 +40 / 互相包含 +24；歌手 相同或互相包含 +20；时长 差 1.5 秒内 +40，再往外 +30 / +15 / +4 / −10
+//   feat 名单或版本说明和这首歌的完全一致 +15；专辑名有一定重合 +6
+//   条目的歌名、歌手全是英文 −5（日语歌在网易云 / QQ 上的正主一般带日文，全英文的多半是翻唱、英文版）；伴奏版 −45
+//   纯中文的歌：繁体、简体当成一样（names.simp 是事先转好的简体写法）
 function scoreCandidate(c, track, names) {
   let score = 0;
-  const ct = [norm(c.title), ...c.alias.map(norm)].filter(Boolean);
+  const simp = (x) => names.simp?.get(x) || x;
+  const ct = [norm(c.title), norm(simp(c.title)), ...c.alias.map(norm)].filter(Boolean);
   let t = 0;
   for (const n of names.titles) {
     if (!n) continue;
@@ -103,8 +151,12 @@ function scoreCandidate(c, track, names) {
     else if (ct.some((x) => x.includes(n) || n.includes(x))) t = Math.max(t, 24);
   }
   score += t;
-  const ca = c.artists.map(norm);
+  const ca = [...c.artists.map(norm), ...c.artists.map((x) => norm(simp(x)))].filter(Boolean);
   if (names.artists.some((n) => n && ca.some((x) => x === n || x.includes(n) || n.includes(x)))) score += 20;
+  const tags = [c.title, ...c.alias].map(titleTags);
+  if (names.tags.some((t) => tags.some((x) => (t.feat && t.feat === x.feat) || (t.ver && t.ver === x.ver)))) score += 15;
+  if (names.albums.some((a) => albumOverlap(a, c.album))) score += 6;
+  if (!/[^\x00-\x7f]/.test(c.title + c.artists.join(''))) score -= 5;
   if (track.duration) {
     const d = Math.abs(c.duration - track.duration);
     score += d <= 1.5 ? 40 : d <= 3 ? 30 : d <= 6 ? 15 : d <= 12 ? 4 : -10;
@@ -117,10 +169,12 @@ function scoreCandidate(c, track, names) {
 export async function findCandidates(track, manualQuery) {
   const titles = [cleanTitle(track.name)];
   const artists = [track.artist || ''];
-  if (!manualQuery && !HAS_CJK.test(track.name)) {
+  const rawTitles = [track.name], albums = [track.album || ''];
+  // 歌名本身（去掉 feat 之类的括号以后）没有日文、汉字的才反查：「kokoronashi (feat. 宵崎奏…)」括号里有汉字，歌名却是罗马字
+  if (!manualQuery && !HAS_CJK.test(cleanTitle(track.name))) {
     try {
       const jp = await lookupJapaneseName(track);
-      if (jp) { titles.push(cleanTitle(jp.title)); artists.push(jp.artist); }
+      if (jp) { titles.push(cleanTitle(jp.title)); artists.push(jp.artist); rawTitles.push(jp.title); albums.push(jp.album); }
     } catch { /* 反查失败不影响主流程 */ }
   }
   const queries = new Set();
@@ -141,10 +195,22 @@ export async function findCandidates(track, manualQuery) {
       if (!seen.has(k)) seen.set(k, c);
     }
   }
-  const names = { titles: [...new Set(titles.map(norm))], artists: [...new Set(artists.map(norm))] };
+  const names = {
+    titles: [...new Set(titles.map(norm))], artists: [...new Set(artists.map(norm))],
+    tags: rawTitles.map(titleTags), albums: albums.filter(Boolean),
+  };
+  // 纯中文的歌（歌名、歌手里有汉字、没有假名）：Apple Music 里常是繁体，网易云 / QQ 是简体。都转成简体再比一遍
+  const own = `${track.name}${track.artist || ''}`;
+  if (/[㐀-鿿]/.test(own) && !HAS_JA.test(own)) {
+    const list = [...new Set([...titles, ...artists, ...[...seen.values()].flatMap((c) => [c.title, ...c.artists])].filter((x) => /[㐀-鿿]/.test(x)))];
+    const got = await toSimplified(list);
+    names.simp = new Map(list.map((x, i) => [x, got[i]]));
+    names.titles = [...new Set([...names.titles, ...titles.map((x) => norm(names.simp.get(x) || x))])];
+    names.artists = [...new Set([...names.artists, ...artists.map((x) => norm(names.simp.get(x) || x))])];
+  }
   const out = [...seen.values()].map((c) => ({ ...c, score: scoreCandidate(c, track, names) }));
-  // 同分时网易云优先（带罗马音，可用于假名纠错）
-  out.sort((a, b) => b.score - a.score || (a.source === 'netease' ? -1 : 1));
+  // 同分时网易云排在 QQ 前面（带罗马音，可用于假名纠错）；同一个来源里保持它自己搜索结果的先后（一般正主排最前）
+  out.sort((a, b) => b.score - a.score || (a.source === b.source ? 0 : a.source === 'netease' ? -1 : 1));
   return out.slice(0, 16);
 }
 
