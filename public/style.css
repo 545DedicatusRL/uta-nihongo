@@ -124,6 +124,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 #morph-ghost #art-wrap, #morph-ghost #meta { visibility: hidden; }
 #morph-ghost #focus { overflow: visible; }
 #morph-ghost #f-cur { animation: none; }
+#morph-ghost .ul { position: fixed; height: 2px; pointer-events: none; } /* 飞行中每个字底下带着的那一小段标注线 */
 
 /* ---------- 歌词（滚动样式） ---------- */
 #lyrics { min-width: 0; min-height: 0; position: relative; }

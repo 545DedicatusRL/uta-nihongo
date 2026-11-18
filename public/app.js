@@ -2702,12 +2702,19 @@ function morphView(to) {
   // 一个字在哪：量字本身（带注音的量第一个汉字），不量外面的框——框的高矮在两个样式里不一样，字本身才对得上
   const at = (u) => textRect(u.classList.contains('ch') ? u : $('.ch', u) || u);
   const seen = (r) => r.width > 0 || r.height > 0; // 折行处被吃掉的空格量出来是空的
+  // 这个字所在的词的标注线画在多高：词的框的下沿。不能直接用字的下沿——逐字歌词里唱到的字是抬起来的，线却不跟着抬。
+  // 词折成两行时框也分成两段，取字所在的那一段
+  const lineY = (u, c) => {
+    const hit = [...(u.closest('.tok')?.getClientRects() || [])].filter((r) => c.left >= r.left - 1 && c.right <= r.right + 1);
+    return hit.length ? hit.reduce((a, b) => (Math.abs(b.bottom - c.bottom) < Math.abs(a.bottom - c.bottom) ? b : a)).bottom : c.bottom;
+  };
   // 之前
   const a0 = rect(artEl), rad0 = px(artEl, 'borderTopLeftRadius'), sh0 = getComputedStyle(artEl).boxShadow, m0 = rect(metaEl), f0 = px($('#title'), 'fontSize');
   const oldLine = toScroll ? cur : elScroll.children[a];
   let t0 = S.lines[a] && !S.lines[a].gap && oldLine ? measure(oldLine) : null;
   if (t0?.[0] && !toScroll) { const box = rect($('#lyrics')); if (t0[0].r.bottom < box.top || t0[0].r.top > box.bottom) t0 = null; } // 自己划走了、当前句不在屏幕上：这一句不飞
   const u0 = t0?.[0] ? unitsOf(oldLine).map(at) : [];
+  const y0 = t0?.[0] ? unitsOf(oldLine).map((u, k) => lineY(u, u0[k])) : [];
   // 原来的播放器和歌词各留一份替身，盖在原处（样式靠 id 和外层的 class 对上，所以外层抄一份 #app 的 class）
   $('#morph-ghost')?.remove();
   const ghost = document.createElement('div');
@@ -2769,8 +2776,31 @@ function morphView(to) {
       if (p) el.animate(move({ box: rect(el), r: textRect(el) }, p.r, q.r, p.fs / q.fs), { ...opt, fill: 'both' });
       else fadeIn(el); // 原来的样式里没有这一行：到了新样式才淡入
     }
-    // 词下面的标注线没法跟着字飞：先不画，字快落地时在原位浮现
-    for (const tok of $$('.tok.hg, .tok.hv', F)) tok.animate([{ boxShadow: 'none' }, {}], { duration: 220, delay: MORPH.ms * 0.6, easing: 'ease-out', fill: 'backwards' });
+    // 词下面的标注线：跟着字一起飞。线本来是画在整个词上的，而这一份的排版和真的那句会有出入（见上），
+    // 照原样画的话线会落在错的地方，落地换成真的那句时再跳一下。所以这一份里词上的线不画，
+    // 改成每个字底下各带一小段，和字走同一条路；落地时一段挨一段，正好拼成真的那句的线
+    if (!app.classList.contains('no-ann')) {
+      const box1 = units1.map(rect), y1 = units1.map((u, k) => lineY(u, u1[k])), k0 = t0[0].fs / t1[0].fs;
+      for (const tok of $$('.tok.hg, .tok.hv', F)) tok.style.boxShadow = 'none';
+      us.forEach((u, k) => {
+        const tok = u.closest('.tok'), g = tok?.classList.contains('hg'), v = tok?.classList.contains('hv');
+        const p = u0[k], q = u1[k], b = box1[k];
+        if ((!g && !v) || !seen(p) || !seen(q)) return;
+        // 线贴着词的框的下沿，2 像素粗；语法和词汇都有时词汇的在下、语法的叠在它上面
+        [v ? 'vocab' : 'grammar', g && v ? 'grammar' : ''].forEach((color, up) => {
+          if (!color) return;
+          const bar = document.createElement('i'), top = y1[k] - 2 * (up + 1);
+          bar.className = 'ul';
+          bar.style.cssText = `left:${b.left - 0.3}px;top:${top}px;width:${b.width + 0.6}px;background:var(--${color});`;
+          ghost.append(bar); // 挂在最外层：那一句自己带着滤镜，里面的东西没法按屏幕坐标定位
+          // 起点：原来那个字底下同样的位置（那时字是现在的 k0 倍大，线也按这个倍数算）
+          bar.animate([
+            { transformOrigin: '0 0', translate: `${p.left + (b.left - q.left) * k0 - b.left}px ${y0[k] - 2 * (up + 1) * k0 - top}px`, scale: k0 },
+            { transformOrigin: '0 0', translate: '0 0', scale: 1 },
+          ], { ...opt, fill: 'both' });
+        });
+      });
+    }
     // 真的那一句（日文、罗马音、翻译）藏到落地为止；替身里原来那一句也藏起来，字正从那里飞走
     const gOld = toScroll ? $('#f-cur', ghost) : $('#scroll', ghost).children[a];
     for (const sel of PARTS) {
