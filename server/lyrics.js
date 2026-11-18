@@ -121,25 +121,50 @@ async function searchQQ(query) {
   }));
 }
 
-// Apple Music 里很多日语歌显示的是英文/罗马字曲名；用 iTunes 日区搜索反查日文原名。
+// Apple Music 里很多日语歌显示的是英文 / 罗马字的歌名、歌手名；到 iTunes 反查日文原名。
+// 日区只有日文名，没法拿英文名去对；所以分两步：
+//   1. 先在英文区（美区，没有再试港区）按「歌名相同 + 时长差 1.5 秒内」认准这首歌，歌手也对得上的优先；
+//      再拿它的 id 去日区取日文的歌名、歌手、专辑。同一首歌在各区的 id 一般是一样的
+//   2. 日区没有这个 id（发行版本不同）：在日区搜，只要「同一个歌手（歌手 id 各区通用）+ 时长差 6 秒内」里最接近的
+//   3. 英文区连歌手都没认出来：退回老办法，日区搜索结果里时长差 2.5 秒内最接近的（没有别的佐证，可能挑错）
+const itunes = (path) => getJSON(`https://itunes.apple.com/${path}`);
 async function lookupJapaneseName(track) {
-  const term = `${cleanTitle(track.name)} ${track.artist || ''}`.trim();
-  const u = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&country=JP&lang=ja_jp&entity=song&limit=12`;
-  const j = await getJSON(u);
-  let best = null;
-  for (const r of j.results || []) {
-    const diff = Math.abs((r.trackTimeMillis || 0) / 1000 - (track.duration || 0));
-    if (track.duration && diff > 2.5) continue;
-    if (!best || diff < best.diff) best = { diff, title: r.trackName, artist: r.artistName, album: r.collectionName || '' };
+  const title = cleanTitle(track.name), dur = track.duration || 0;
+  const term = encodeURIComponent(`${title} ${track.artist || ''}`.trim());
+  const secs = (r) => (r.trackTimeMillis || 0) / 1000;
+  const sameArtist = (r) => { const x = norm(r.artistName), y = norm(track.artist); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
+  const pack = (r) => ({ title: r.trackName, artist: r.artistName, album: r.collectionName || '' });
+  const japanese = (r) => HAS_CJK.test(`${r.trackName}${r.artistName}`);
+  const artistIds = new Set();
+  for (const cc of ['US', 'HK']) {
+    let list = [];
+    try { list = (await itunes(`search?term=${term}&country=${cc}&entity=song&limit=25`)).results || []; } catch { continue; }
+    for (const r of list) if (sameArtist(r) && r.artistId) artistIds.add(r.artistId);
+    const hits = list.filter((r) => norm(r.trackName) === norm(title) && (!dur || Math.abs(secs(r) - dur) <= 1.5));
+    hits.sort((x, y) => sameArtist(y) - sameArtist(x));
+    if (!hits.length) continue;
+    try {
+      const got = (await itunes(`lookup?id=${hits.slice(0, 8).map((r) => r.trackId).join(',')}&country=JP&lang=ja_jp`)).results || [];
+      const byId = new Map(got.map((r) => [r.trackId, r]));
+      const jp = hits.map((r) => byId.get(r.trackId)).find((r) => r && japanese(r));
+      if (jp) return pack(jp);
+    } catch { /* 往下走 */ }
+    break;
   }
-  return best;
+  const list = (await itunes(`search?term=${term}&country=JP&lang=ja_jp&entity=song&limit=25`)).results || [];
+  const closest = (pool, tol) => pool.filter((r) => !dur || Math.abs(secs(r) - dur) <= tol).sort((x, y) => Math.abs(secs(x) - dur) - Math.abs(secs(y) - dur))[0];
+  const jp = artistIds.size ? closest(list.filter((r) => artistIds.has(r.artistId)), 6) : closest(list, 2.5);
+  return jp && japanese(jp) ? pack(jp) : null;
 }
 
 // 打分（满分大致 100 出头）：
 //   歌名 完全相同 +40 / 互相包含 +24；歌手 相同或互相包含 +20；时长 差 1.5 秒内 +40，再往外 +30 / +15 / +4 / −10
 //   feat 名单或版本说明和这首歌的完全一致 +15；专辑名有一定重合 +6
 //   条目的歌名、歌手全是英文 −5（日语歌在网易云 / QQ 上的正主一般带日文，全英文的多半是翻唱、英文版）；伴奏版 −45
+//   条目的歌名带着这首歌没有的版本说明（English Version、Cover、Remastered、Live…）−12
 //   纯中文的歌：繁体、简体当成一样（names.simp 是事先转好的简体写法）
+// 版本说明里出现这些词的才算「另一个版本」：括号里也常常只是中文译名、动画名，那些不扣分
+const VERSION_WORD = /ver|remaster|remix|cover|live|acoustic|instrumental|inst|english|demo|edit|mix|piano|tvsize|short|翻唱|翻自|现场|現場|伴奏|钢琴|鋼琴|英文|カバー|弾き語り|ライブ/i;
 function scoreCandidate(c, track, names) {
   let score = 0;
   const simp = (x) => names.simp?.get(x) || x;
@@ -157,6 +182,8 @@ function scoreCandidate(c, track, names) {
   if (names.tags.some((t) => tags.some((x) => (t.feat && t.feat === x.feat) || (t.ver && t.ver === x.ver)))) score += 15;
   if (names.albums.some((a) => albumOverlap(a, c.album))) score += 6;
   if (!/[^\x00-\x7f]/.test(c.title + c.artists.join(''))) score -= 5;
+  const own = titleTags(c.title).ver;
+  if (own && VERSION_WORD.test(own) && !names.tags.some((t) => t.ver === own)) score -= 12;
   if (track.duration) {
     const d = Math.abs(c.duration - track.duration);
     score += d <= 1.5 ? 40 : d <= 3 ? 30 : d <= 6 ? 15 : d <= 12 ? 4 : -10;
@@ -171,7 +198,8 @@ export async function findCandidates(track, manualQuery) {
   const artists = [track.artist || ''];
   const rawTitles = [track.name], albums = [track.album || ''];
   // 歌名本身（去掉 feat 之类的括号以后）没有日文、汉字的才反查：「kokoronashi (feat. 宵崎奏…)」括号里有汉字，歌名却是罗马字
-  if (!manualQuery && !HAS_CJK.test(cleanTitle(track.name))) {
+  // 歌名已经是日文、歌手却是罗马字的（言って。 / Yorushika）也反查：为的是拿到日文的歌手名
+  if (!manualQuery && (!HAS_CJK.test(cleanTitle(track.name)) || !HAS_CJK.test(track.artist || ''))) {
     try {
       const jp = await lookupJapaneseName(track);
       if (jp) { titles.push(cleanTitle(jp.title)); artists.push(jp.artist); rawTitles.push(jp.title); albums.push(jp.album); }
@@ -346,7 +374,8 @@ export async function fetchLyrics(cand, refresh = false) {
   return data;
 }
 
-// 自动挑选：在分数靠前的候选里，优先「有歌词 + 有翻译」，其次逐字、罗马音
+// 自动挑选：在分数靠前的候选里，优先「有歌词 + 有翻译」，其次逐字、罗马音。
+// 逐字 +10：要压过「专辑名重合」的 +6——同一首歌的两个条目，宁可要有逐字的那个
 export async function pickBest(candidates) {
   const top = candidates.filter((c) => c.score >= 44).slice(0, 5);
   let best = null;
@@ -358,7 +387,7 @@ export async function pickBest(candidates) {
   }));
   for (const c of top) {
     if (!c.flags || !c.flags.lines) continue;
-    const v = c.score + (c.flags.trans ? 14 : 0) + (c.flags.words ? 6 : 0) + (c.flags.roma ? 3 : 0) + (c.flags.japanese ? 4 : 0);
+    const v = c.score + (c.flags.trans ? 14 : 0) + (c.flags.words ? 10 : 0) + (c.flags.roma ? 3 : 0) + (c.flags.japanese ? 4 : 0);
     if (!best || v > best.v) best = { v, c };
   }
   return best ? best.c : null;
