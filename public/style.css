@@ -37,9 +37,14 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; color: var(--fg-2); }
 .pill:hover { color: var(--fg); background: var(--glass-2); }
 .group { display: inline-flex; padding: 3px; gap: 2px; }
-.seg-btn { padding: 4px 11px; border-radius: 999px; color: var(--fg-3); font-size: 13px; white-space: nowrap; transition: background .15s, color .15s; }
+/* 选中的那一格的白底是用「向内的阴影」铺出来的，不用 background。
+   原来用 background 做渐变时，切换样式后大约 0.13 秒，两格的底色偶尔会一起跳回「渐变到一半」的样子一帧再恢复，
+   字的颜色却不跟着跳——底色和字色不是在同一拍里画出来的（浏览器会把 background-color 的渐变单独拿去合成）。
+   阴影的渐变和字色一样是每帧一起重画的，两样不会错开 */
+.seg-btn { padding: 4px 11px; border-radius: 999px; color: var(--fg-3); font-size: 13px; white-space: nowrap;
+  box-shadow: inset 0 0 0 2em rgba(255, 255, 255, 0); transition: box-shadow .15s, color .15s; }
 .seg-btn:hover { color: var(--fg); }
-.seg-btn.on { background: rgba(255, 255, 255, .88); color: #2a2433; font-weight: 600; }
+.seg-btn.on { box-shadow: inset 0 0 0 2em rgba(255, 255, 255, .88); color: #2a2433; font-weight: 600; }
 /* 「修改」按钮：进入修改模式后变黄，并展开成「修改读音 / 词义」 */
 #btn-edit { transition: background .25s, color .25s, border-color .25s; }
 #btn-edit.on { background: var(--warn); color: #2a2433; border-color: transparent; }
