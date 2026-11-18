@@ -527,6 +527,11 @@ function setActive(i) {
   if (first) apply(); else glide(apply, i);
   collectFill();
 }
+// 按字拆开的汉字：注音里属于它的那几个假名（rt 里和它同一个位置的 .rk）。不是这种汉字就没有
+function rkOf(el) {
+  const ruby = el.parentNode.tagName === 'RUBY' ? el.parentNode : null;
+  return ruby && ruby.lastElementChild.classList.contains('rks') ? ruby.lastElementChild.children[Array.prototype.indexOf.call(ruby.children, el)] : null;
+}
 function collectFill() {
   const line = S.lines[S.active];
   // 上一句里还没落回去的长音：还在页面上的留着接着落，其余的直接复位
@@ -542,8 +547,7 @@ function collectFill() {
     S.fill = { segs: $$('.fu', root).map((el) => {
       el.classList.remove('on');
       // 按字拆开的汉字：注音里属于它的那几个假名（rt 里和它同一个位置的 .rk）跟着它一起动
-      const ruby = el.parentNode.tagName === 'RUBY' ? el.parentNode : null;
-      const rk = ruby && ruby.lastElementChild.classList.contains('rks') ? ruby.lastElementChild.children[Array.prototype.indexOf.call(ruby.children, el)] : null;
+      const rk = rkOf(el);
       rk?.classList.remove('on');
       const s = { el, rk, t0: +el.dataset.t0, t1: +el.dataset.t1, d: Math.max(0.05, el.dataset.t1 - el.dataset.t0), p: -1, on: false };
       const old = holdTail.find((x) => x.el === el); // 同一句重新收集（切换显示方式等）：接着原来的状态
@@ -731,10 +735,15 @@ function tick() {
     const on = t >= s.t0 - LIFT_LEAD;
     if (on !== s.on) { s.on = on; s.el.classList.toggle('on', on); s.rk?.classList.toggle('on', on); }
   }
-  // 大字 → 滚动的过渡里，飞着的那句替身：填色跟着真的那一句走
+  // 滚动 ⇄ 大字 的过渡里，飞着的那一份：填色、抬起都跟着真的那一句走
   if (morphFus) {
-    if (morphFus.a !== S.active || !morphFus.els[0]?.isConnected) morphFus = null;
-    else f.segs.forEach((s, k) => { const g = morphFus.els[k]; if (g) { g.style.setProperty('--p', s.p); g.classList.toggle('on', s.on); } });
+    if (morphFus.a !== S.active || !morphFus.els[0]?.el.isConnected) morphFus = null;
+    else f.segs.forEach((s, k) => {
+      const g = morphFus.els[k];
+      if (!g) return;
+      g.el.style.setProperty('--p', s.p); g.el.classList.toggle('on', s.on);
+      if (g.rk) { g.rk.style.setProperty('--p', s.p); g.rk.classList.toggle('on', s.on); }
+    });
   }
 }
 function frame() {
@@ -1017,6 +1026,7 @@ document.addEventListener('mouseover', (e) => {
 
 // ---------------- 点击歌词：跳转 / 敲击对齐 / 辞书选择 / 改读音 ----------------
 let popClosedAt = -1e9; // 上一次因为点到外面而关掉读音小窗的时刻
+let dismissClick = false; // 刚按下的这一下鼠标把资料库 / 词汇书收起来了
 function seekTo(sec) {
   sec = Math.max(0, sec);
   S.jumped = true; // 自己跳的：哪怕只跳了一点点（点了紧挨着的下一句），也不算「唱过来的」
@@ -2406,7 +2416,9 @@ document.addEventListener('mousedown', (e) => {
   if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset') && !(S.tapAlign && e.target.closest('#lyrics, #focus'))) $('#offset-pop').hidden = true;
   if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) toggleMenu(false);
   if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) { $('#reading-pop').hidden = true; popClosedAt = performance.now(); }
-  for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) $(`#${id}`).hidden = true;
+  // 这一下是不是用来收起资料库 / 词汇书的：是的话它只管收起，不再算点了底下的封面（见封面的点击）
+  dismissClick = false;
+  for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) { $(`#${id}`).hidden = true; dismissClick = true; }
 });
 
 $('#btn-play').addEventListener('click', () => control('playpause'));
@@ -2649,16 +2661,18 @@ for (const id of ['#lib-search', '#vocab-search']) {
 // 做法是 FLIP：先记下各样东西现在在哪，直接换成另一个样式，再让它们从原来的位置用弹簧动画走到新位置。
 //   - 封面：平移 + 放大 / 缩小（圆角和阴影按比例折算，飞的途中看着是同一块东西）
 //   - 歌名 / 歌手：跟着平移、缩放一点
-//   - 正在唱的那一句：日文、罗马音、翻译各自在「屏幕中间的大字」和「滚动歌词里它的位置」之间飞
-//       去滚动：飞的是原来那句的替身（滚动歌词的框会把飞出框外的部分裁掉，真的那句飞不了），快到位时换成真的
-//       去大字：飞的就是真的那句
+//   - 正在唱的那一句：每个字各飞各的，从它原来的位置飞到它在新样式里的位置。
+//       两个样式的字号、每行能放几个字都不一样，同一句常常在不同的地方折行；整句当一块飞的话，折行不同时就落不到位。
+//       飞的是照着新样式里这一句抄的一份（不在滚动歌词的框里，不会被裁），真的那一句先藏着；
+//       落地时这一份和真的那一句完全重合，直接换过去，看不出来。罗马音、翻译各自整行飞
 //   - 进度条和按钮、其余的歌词：不飞，旧的淡出、新的淡入
 const FX_MORPH = true; // 实验性的，不想要了改成 false：点封面没有反应，按钮和快捷键回到直接切换
 const MORPH = springEasing(150, 21.5); // 比换行用的弹簧活一点：到位时只略微过头一点点（约 0.3%）
-let morphFus = null; // 去滚动时飞行中的那句替身里的填色单位：飞的这半秒里逐字填色照常走（见 tick）
+let morphFus = null; // 飞着的那一份里的填色单位：飞的这半秒里逐字填色照常走（见 tick）
 const flatView = (v) => v === 'apple' || v === 'focus';
 $('#art-wrap').classList.toggle('go', FX_MORPH);
-$('#art-wrap').addEventListener('click', () => { if (FX_MORPH && flatView(prefs.view)) morphView(prefs.view === 'focus' ? 'apple' : 'focus'); });
+// 资料库 / 词汇书开着的时候点到封面：那一下只是把抽屉收起来（mousedown 时已经收了），不切换样式
+$('#art-wrap').addEventListener('click', () => { if (FX_MORPH && !dismissClick && flatView(prefs.view)) morphView(prefs.view === 'focus' ? 'apple' : 'focus'); });
 function morphView(to) {
   const from = prefs.view;
   if (from === to) return;
@@ -2672,11 +2686,17 @@ function morphView(to) {
   // 当前句的三样（日文、罗马音、翻译）各记各的：大字里是居中的，滚动样式里靠左，字号的比例也不一样，得分开飞
   const PARTS = ['.jp', '.roma', '.zh'];
   const measure = (root) => PARTS.map((sel) => { const el = $(sel, root); return el && el.offsetWidth ? { r: textRect(el), box: rect(el), fs: px(el, 'fontSize') } : null; });
+  // 日文那一行里各飞各的「字」：普通的字一个字一个；带注音的汉字连同注音是一个（拆不开）
+  const unitsOf = (root) => { const jp = $('.jp', root); return jp ? $$('.seg', jp).flatMap((seg) => (seg.firstElementChild?.tagName === 'RUBY' ? [seg] : $$('.ch', seg))) : []; };
+  // 一个字在哪：量字本身（带注音的量第一个汉字），不量外面的框——框的高矮在两个样式里不一样，字本身才对得上
+  const at = (u) => textRect(u.classList.contains('ch') ? u : $('.ch', u) || u);
+  const seen = (r) => r.width > 0 || r.height > 0; // 折行处被吃掉的空格量出来是空的
   // 之前
   const a0 = rect(artEl), rad0 = px(artEl, 'borderTopLeftRadius'), sh0 = getComputedStyle(artEl).boxShadow, m0 = rect(metaEl), f0 = px($('#title'), 'fontSize');
   const oldLine = toScroll ? cur : elScroll.children[a];
   let t0 = S.lines[a] && !S.lines[a].gap && oldLine ? measure(oldLine) : null;
   if (t0?.[0] && !toScroll) { const box = rect($('#lyrics')); if (t0[0].r.bottom < box.top || t0[0].r.top > box.bottom) t0 = null; } // 自己划走了、当前句不在屏幕上：这一句不飞
+  const u0 = t0?.[0] ? unitsOf(oldLine).map(at) : [];
   // 原来的播放器和歌词各留一份替身，盖在原处（样式靠 id 和外层的 class 对上，所以外层抄一份 #app 的 class）
   $('#morph-ghost')?.remove();
   const ghost = document.createElement('div');
@@ -2712,24 +2732,47 @@ function morphView(to) {
   fadeIn($('#transport'));
   const newLine = toScroll ? elScroll.children[a] : cur;
   const t1 = t0?.[0] && newLine ? measure(newLine) : null;
-  const fly = !!t1?.[0];
-  const flight = (p, q) => `translate(${q.r.left - p.r.left}px, ${q.r.top - p.r.top}px) scale(${q.fs / p.fs})`; // 把 p 那里的字摆到 q 那里
-  const origin = (p) => `${p.r.left - p.box.left}px ${p.r.top - p.box.top}px`; // 以这段字的左上角为准
+  const units1 = t1?.[0] ? unitsOf(newLine) : [];
+  const fly = units1.length > 0 && units1.length === u0.length;
+  if (fly) {
+    const u1 = units1.map(at);
+    // 飞的那一份：照着新样式里的这一句抄一份，摆在同一个地方
+    const F = newLine.cloneNode(true), r = rect(newLine);
+    F.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;text-align:${getComputedStyle(newLine).textAlign};`;
+    $('.ann', F)?.remove();
+    ghost.append(F);
+    // 每个字要能单独挪动、缩放，得是 inline-block。这会让这一份的排版和真的那句有一点出入（比如折行的地方不同），
+    // 所以不指望它，改完以后再量一遍每个字实际在哪（rest），起点和终点都按这个折算
+    const us = unitsOf(F);
+    for (const u of us) { u.style.display = 'inline-block'; u.style.whiteSpace = 'pre'; }
+    const rest = us.map((u) => ({ box: rect(u), r: at(u) }));
+    const move = (L, from, to, k) => {
+      const o = `${L.r.left - L.box.left}px ${L.r.top - L.box.top}px`;
+      return [{ transformOrigin: o, translate: `${from.left - L.r.left}px ${from.top - L.r.top}px`, scale: k }, { transformOrigin: o, translate: `${to.left - L.r.left}px ${to.top - L.r.top}px`, scale: 1 }];
+    };
+    // 用 translate / scale，不用 transform：逐字歌词里唱到的字靠 transform 抬着，两样叠在一起才和真的那句一模一样
+    us.forEach((u, k) => { if (seen(u0[k]) && seen(u1[k]) && seen(rest[k].r)) u.animate(move(rest[k], u0[k], u1[k], t0[0].fs / t1[0].fs), { ...opt, fill: 'both' }); });
+    for (const k of [1, 2]) {
+      const el = $(PARTS[k], F), p = t0[k], q = t1[k];
+      if (!el || !q) continue;
+      if (p) el.animate(move({ box: rect(el), r: textRect(el) }, p.r, q.r, p.fs / q.fs), { ...opt, fill: 'both' });
+      else fadeIn(el); // 原来的样式里没有这一行：到了新样式才淡入
+    }
+    // 词下面的标注线没法跟着字飞：先不画，字快落地时在原位浮现
+    for (const tok of $$('.tok.hg, .tok.hv', F)) tok.animate([{ boxShadow: 'none' }, {}], { duration: 220, delay: MORPH.ms * 0.6, easing: 'ease-out', fill: 'backwards' });
+    // 真的那一句（日文、罗马音、翻译）藏到落地为止；替身里原来那一句也藏起来，字正从那里飞走
+    const gOld = toScroll ? $('#f-cur', ghost) : $('#scroll', ghost).children[a];
+    for (const sel of PARTS) {
+      $(sel, newLine)?.animate([{ opacity: 0 }, { opacity: 0 }], { duration: MORPH.ms });
+      const g = gOld && $(sel, gOld);
+      if (g) g.style.visibility = 'hidden';
+    }
+    morphFus = { a, els: $$('.fu', F).map((el) => ({ el, rk: rkOf(el) })) };
+  }
   if (toScroll) {
-    const gcur = $('#f-cur', ghost);
     for (const el of $$('#f-prev, #f-ann, #f-next', ghost)) fadeOut(el);
-    if (fly) {
-      PARTS.forEach((sel, k) => {
-        const g = $(sel, gcur), p = t0[k], q = t1[k];
-        if (!g || !p) return;
-        if (!q) return void fadeOut(g); // 滚动样式里没有这一样：原地淡掉
-        g.animate([{ transformOrigin: origin(p), transform: 'none' }, { transformOrigin: origin(p), transform: flight(p, q) }], { ...opt, fill: 'forwards' });
-      });
-      // 真的那一句先在替身底下淡入（两个叠着，看不出来），替身最后才淡掉
-      gcur.animate([{ opacity: 1 }, { opacity: 1, offset: 0.78 }, { opacity: 0 }], { duration: MORPH.ms, fill: 'forwards' });
-      newLine.animate([{ opacity: 0 }, { opacity: 0, offset: 0.45 }, { opacity: 1, offset: 0.78 }, {}], { duration: MORPH.ms });
-      morphFus = { a, els: $$('.fu', gcur) };
-    } else fadeOut(gcur);
+    if (!fly) fadeOut($('#f-cur', ghost));
+    else if ($('.ann', newLine)) fadeIn($('.ann', newLine), 260);
     // 其余的歌词：离当前句越远的越晚一点浮现
     const [lo, hi] = visibleRange(0);
     for (let k = lo; k <= hi; k++) {
@@ -2737,21 +2780,12 @@ function morphView(to) {
       elScroll.children[k].animate([{ opacity: 0, translate: '0 14px' }, {}], { duration: 520, delay: 140 + Math.min(Math.abs(k - a), 8) * 45, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'backwards' });
     }
   } else {
-    const gline = $('#scroll', ghost).children[a];
-    if (fly) {
-      PARTS.forEach((sel, k) => {
-        const el = $(sel, cur), p = t0[k], q = t1[k];
-        if (!el || !q) return;
-        if (!p) return void fadeIn(el); // 滚动样式里没有这一样：到了大字里才淡入
-        const g = gline && $(sel, gline);
-        if (g) g.style.visibility = 'hidden'; // 替身里的这一样藏起来：真的正从这里飞走
-        el.animate([{ transformOrigin: origin(q), transform: flight(q, p) }, { transformOrigin: origin(q), transform: 'none' }], opt);
-      });
-    } else fadeIn(cur, 120);
+    if (!fly) fadeIn(cur, 120);
     fadeOut(ghost.children[1]);
     for (const id of ['#f-prev', '#f-ann', '#f-next']) fadeIn($(id), 240);
   }
-  setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].isConnected) morphFus = null; }, MORPH.ms + 60);
+  // 落地：真的那一句在动画结束的那一刻自己现出来；飞的那一份多留几帧再撤（两个完全重合，叠着看不出来；先撤的话会空一帧）
+  setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].el.isConnected) morphFus = null; }, MORPH.ms + 60);
 }
 
 // ---------------- 使用指引 ----------------
