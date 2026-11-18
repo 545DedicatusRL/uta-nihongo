@@ -259,7 +259,7 @@ const HOLD_MORA = 0.25; // 平常唱歌一个音大约多长（秒）
 const HOLD_MIN = 0.8;   // 至少拖这么久才算长音
 const HOLD_FULL = 1.9;  // 拖到这么久效果就到顶了
 const HOLD_LATIN = 1.3; // 英文音节本来就比日语的一个音长，门槛按这个倍数放宽
-const HOLD_TOP = 0.8;   // 最多停多久（秒），到点就开始落，哪怕这个音还没唱完
+const HOLD_TOP = 0.95;  // 最多停多久（秒），到点就开始落，哪怕这个音还没唱完
 // 这 HOLD_TOP 秒从哪里算起：true = 从冒到最高点算起（在顶上实实在在停这么久）；false = 从唱到这个字算起（升起的时间也算在里面）
 const HOLD_FROM_PEAK = true;
 // 从唱到这个字到冒到差不多最高（85%）要多久：长音的弹簧 τ = 0.15（见 collectFill），走到 85% 是 3.37τ，再减去提前起步的 HOLD_LEAD（0.06）
@@ -1056,7 +1056,8 @@ document.addEventListener('click', (e) => {
   if (S.mode === 'edit' && (inFocus || e.target.closest('#f-ann') || (lineEl && e.target.closest('.tok, .chip')))) return editClick(e);
   if (performance.now() - popClosedAt < 400) return; // 这一下是为了关掉读音小窗，不算点歌词
   const near = e.target.closest('#f-prev, #f-next, .k-line'); // 大字视图里的上一句 / 下一句；KTV 样式里的两行
-  const i = lineEl ? +lineEl.dataset.i : near && near.dataset.i !== '' ? +near.dataset.i : -1;
+  // 敲击对齐时，大字样式里中间那句大字也能点（= 正在显示的这一句现在开始唱）；平时点它没有反应
+  const i = lineEl ? +lineEl.dataset.i : near && near.dataset.i !== '' ? +near.dataset.i : inFocus && S.tapAlign ? S.active : -1;
   const line = S.lines[i];
   if (!line || line.gap) return;
   if (S.tapAlign) {
@@ -2429,7 +2430,7 @@ $$('[data-close]').forEach((b) => b.addEventListener('click', () => { b.closest(
 $$('.modal').forEach((m) => m.addEventListener('mousedown', (e) => { if (e.target === m) m.hidden = true; }));
 document.addEventListener('mousedown', (e) => {
   // 敲击对齐开着时，点歌词是在对齐，不算「点到面板外面」，面板留着方便多敲几次
-  if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset') && !(S.tapAlign && e.target.closest('#lyrics, #focus'))) $('#offset-pop').hidden = true;
+  if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset') && !(S.tapAlign && e.target.closest('#lyrics, #focus, #ktv'))) $('#offset-pop').hidden = true;
   if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) toggleMenu(false);
   if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) { $('#reading-pop').hidden = true; popClosedAt = performance.now(); }
   // 这一下是不是用来收起资料库 / 词汇书的：是的话它只管收起，不再算点了底下的封面（见封面的点击）
