@@ -191,6 +191,8 @@ ruby { ruby-align: center; }
 /* .fu 是填色和抬起的单位：普通的字是一个字一个，带注音的汉字是整个 .seg（见 app.js 的 jpHTML） */
 .timed .fu { display: inline-block; transition: transform var(--lt, .8s) var(--spring, cubic-bezier(.3, .1, .2, 1)); }
 .line.active.timed .fu.on, #f-cur.timed .fu.on { transform: translateY(-.07em); }
+/* 重新收集这一句时（见 app.js 的 collectFill），已经唱过去的字直接摆成抬着的样子，这一下不走过渡 */
+.timed.still .fu, .timed.still .rk { transition: none; }
 .dict-mode .timed .fu.on, .edit-mode .timed .fu.on { transform: none !important; }
 .timed .fu { --p: 0; background: linear-gradient(90deg, #fff calc(var(--p) * 110% - 10%), rgba(255, 255, 255, calc(.38 + .3 * var(--e, 0))) calc(var(--p) * 110%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .timed .fu rt { color: rgba(255, 255, 255, calc(.4 + .6 * var(--p))); opacity: 1; }

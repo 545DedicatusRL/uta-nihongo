@@ -564,6 +564,15 @@ function collectFill() {
       return s;
     }) };
     holdTail = holdTail.filter((x) => !S.fill.segs.some((s) => s.el === x.el));
+    // 已经唱过去的字直接就是抬着的，不从头再抬一遍。同一句会被重新收集（切换显示样式、开关实验功能…），
+    // 不这样的话每次重新收集，前面唱过的字都会一起落下去再弹上来。正在唱的那个字不算，留给 tick 照常抬
+    const t = now() - S.offset, up = S.fill.segs.filter((s) => t >= s.t1 || t >= s.t0 + LIFT_DONE);
+    if (up.length) {
+      root.classList.add('still'); // 这一下不要过渡（见 style.css）
+      for (const s of up) { s.on = true; s.el.classList.add('on'); s.rk?.classList.add('on'); }
+      void root.offsetWidth;
+      root.classList.remove('still');
+    }
   }
 }
 
@@ -704,6 +713,7 @@ function paintDots(f, t) {
   if (o !== f.o) { f.o = o; f.g.style.opacity = o; }
 }
 const LIFT_LEAD = 0.06; // 比唱到的时刻早一点点开始抬（弹簧起步慢，提前一点才跟得上）
+const LIFT_DONE = 0.3;  // 一个字唱了这么久，就算已经抬到位了（见 collectFill）
 function tick() {
   const pos = now();
   const dur = S.track?.duration || 0;
@@ -2678,7 +2688,10 @@ for (const id of ['#lib-search', '#vocab-search']) {
 //       落地时这一份和真的那一句完全重合，直接换过去，看不出来。罗马音、翻译各自整行飞
 //   - 进度条和按钮、其余的歌词：不飞，旧的淡出、新的淡入
 const FX_MORPH = true; // 实验性的，不想要了改成 false：点封面没有反应，按钮和快捷键回到直接切换
-const MORPH = springEasing(150, 21.5); // 比换行用的弹簧活一点：到位时只略微过头一点点（约 0.3%）
+const MORPH = springEasing(150, 21.5); // 封面、歌名用的：比换行的弹簧活一点，到位时略微过头一点点（约 0.2%）再收回来
+// 歌词用的：临界阻尼，一点都不过头。字是一个个各飞各的，飞得远的过头得多、近的过头得少，
+// 整句看上去会先挤一下再松开（还带着缩放），哪怕只有一两个像素也显得「弹」。快慢调到和上面那条差不多同时到位
+const MORPH_TEXT = springEasing(230, 30.4);
 let morphFus = null; // 飞着的那一份里的填色单位：飞的这半秒里逐字填色照常走（见 tick）
 const flatView = (v) => v === 'apple' || v === 'focus';
 $('#art-wrap').classList.toggle('go', FX_MORPH);
@@ -2754,6 +2767,7 @@ function morphView(to) {
   // 之后
   const a1 = rect(artEl), m1 = rect(metaEl), f1 = px($('#title'), 'fontSize'), s = a0.width / a1.width;
   const opt = { duration: MORPH.ms, easing: MORPH.easing };
+  const optT = { duration: MORPH_TEXT.ms, easing: MORPH_TEXT.easing, fill: 'both' };
   artEl.style.zIndex = 3;
   artEl.animate([
     { transformOrigin: '0 0', transform: `translate(${a0.left - a1.left}px, ${a0.top - a1.top}px) scale(${s})`, borderRadius: `${rad0 / s}px`, boxShadow: scalePx(sh0, s) },
@@ -2780,13 +2794,16 @@ function morphView(to) {
     // 所以不指望它，改完以后再量一遍每个字实际在哪（rest），起点和终点都按这个折算
     const us = unitsOf(F);
     for (const u of us) { u.style.display = 'inline-block'; u.style.whiteSpace = 'pre'; }
-    const rest = us.map((u) => ({ box: rect(u), r: at(u) }));
+    // m：这个字自己身上的位移（唱到的字是抬着的）。它排在缩放的里面，起步时会跟着被放大 / 缩小 k 倍，要把多出来的那截扣掉
+    const lift = (u) => { const tr = getComputedStyle(u).transform; return tr && tr !== 'none' ? new DOMMatrix(tr) : null; };
+    const rest = us.map((u) => ({ box: rect(u), r: at(u), m: lift(u) }));
     const move = (L, from, to, k) => {
       const o = `${L.r.left - L.box.left}px ${L.r.top - L.box.top}px`;
-      return [{ transformOrigin: o, translate: `${from.left - L.r.left}px ${from.top - L.r.top}px`, scale: k }, { transformOrigin: o, translate: `${to.left - L.r.left}px ${to.top - L.r.top}px`, scale: 1 }];
+      const mx = (L.m?.e || 0) * (1 - k), my = (L.m?.f || 0) * (1 - k);
+      return [{ transformOrigin: o, translate: `${from.left - L.r.left + mx}px ${from.top - L.r.top + my}px`, scale: k }, { transformOrigin: o, translate: `${to.left - L.r.left}px ${to.top - L.r.top}px`, scale: 1 }];
     };
     // 用 translate / scale，不用 transform：逐字歌词里唱到的字靠 transform 抬着，两样叠在一起才和真的那句一模一样
-    us.forEach((u, k) => { if (seen(u0[k]) && seen(u1[k]) && seen(rest[k].r)) u.animate(move(rest[k], u0[k], u1[k], t0[0].fs / t1[0].fs), { ...opt, fill: 'both' }); });
+    us.forEach((u, k) => { if (seen(u0[k]) && seen(u1[k]) && seen(rest[k].r)) u.animate(move(rest[k], u0[k], u1[k], t0[0].fs / t1[0].fs), optT); });
     // 罗马音、翻译：两个样式里折行的地方一样就整行飞；不一样（长句子常这样）就按折行切成几段，各段各飞各的。
     // 整行飞的话，起步时它已经是新样式的折法，和原来的形状对不上，看上去是先跳了一下再飞
     for (const k of [1, 2]) {
@@ -2795,7 +2812,7 @@ function morphView(to) {
       if (!p) { fadeIn(el); continue; } // 原来的样式里没有这一行：到了新样式才淡入
       const a0 = c0[k], a1 = charRects($(PARTS[k], newLine)), text = el.firstChild?.data;
       const runs = a0 && a1 && a0.length === a1.length && text?.length === a0.length && el.childNodes.length === 1 ? splitRuns(a0, a1) : [];
-      if (runs.length < 2) { el.animate(move({ box: rect(el), r: textRect(el) }, p.r, q.r, p.fs / q.fs), { ...opt, fill: 'both' }); continue; }
+      if (runs.length < 2) { el.animate(move({ box: rect(el), r: textRect(el) }, p.r, q.r, p.fs / q.fs), optT); continue; }
       el.textContent = '';
       const spans = runs.map(([from, to]) => {
         const sp = document.createElement('span');
@@ -2813,7 +2830,7 @@ function morphView(to) {
         rg.setStart(sp.firstChild, j - from); rg.setEnd(sp.firstChild, j - from + 1);
         return { j, box: rect(sp), r: rg.getBoundingClientRect() };
       });
-      spans.forEach((sp, n) => { const L = pin[n]; if (seen(a0[L.j]) && seen(a1[L.j]) && seen(L.r)) sp.animate(move(L, a0[L.j], a1[L.j], p.fs / q.fs), { ...opt, fill: 'both' }); });
+      spans.forEach((sp, n) => { const L = pin[n]; if (seen(a0[L.j]) && seen(a1[L.j]) && seen(L.r)) sp.animate(move(L, a0[L.j], a1[L.j], p.fs / q.fs), optT); });
     }
     // 词下面的标注线：跟着字一起飞。线本来是画在整个词上的，而这一份的排版和真的那句会有出入（见上），
     // 照原样画的话线会落在错的地方，落地换成真的那句时再跳一下。所以这一份里词上的线不画，
@@ -2837,7 +2854,7 @@ function morphView(to) {
           bar.animate([
             { transformOrigin: '0 0', translate: `${p.left + (b.left - q.left) * k0 - b.left}px ${y0[k] - 2 * (up + 1) * k0 - top}px`, scale: k0 },
             { transformOrigin: '0 0', translate: '0 0', scale: 1 },
-          ], { ...opt, fill: 'both' });
+          ], optT);
         });
       });
     }
@@ -2845,7 +2862,7 @@ function morphView(to) {
     const gOld = toScroll ? $('#f-cur', ghost) : $('#scroll', ghost).children[a];
     let hide = null;
     for (const sel of PARTS) {
-      hide = $(sel, newLine)?.animate([{ opacity: 0 }, { opacity: 0 }], { duration: MORPH.ms }) || hide;
+      hide = $(sel, newLine)?.animate([{ opacity: 0 }, { opacity: 0 }], { duration: MORPH_TEXT.ms }) || hide;
       const g = gOld && $(sel, gOld);
       if (g) g.style.visibility = 'hidden';
     }
@@ -2871,7 +2888,7 @@ function morphView(to) {
     for (const id of ['#f-prev', '#f-ann', '#f-next']) fadeIn($(id), 240);
   }
   // 收尾：别的替身这时早就淡完了，连同外层一起撤掉（飞的那一份在落地的那一帧已经自己撤了，见上）
-  setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].el.isConnected) morphFus = null; }, MORPH.ms + 60);
+  setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].el.isConnected) morphFus = null; }, Math.max(MORPH.ms, MORPH_TEXT.ms) + 60);
 }
 
 // ---------------- 使用指引 ----------------
