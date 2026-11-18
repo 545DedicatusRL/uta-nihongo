@@ -205,10 +205,12 @@ function withGaps(lines) {
 const art = { track: null, status: '', cover: '' };
 function setArt(track, cover) {
   const img = $('#art'), bg = $('#bg-img');
-  if (!track) { art.track = null; img.classList.remove('on'); bg.classList.remove('on'); return; }
+  if (!track) { art.track = null; img.classList.remove('on'); bg.classList.remove('on'); $('#ktv').classList.remove('has-art'); return; }
   const show = (url) => {
     if (art.track !== track) return;
     img.src = url; img.classList.add('on');
+    for (const el of $$('.art-copy')) el.src = url; // KTV 样式里的封面、倒影、远处那两张
+    $('#ktv').classList.add('has-art');
     bg.style.backgroundImage = `url("${url}")`; bg.classList.add('on');
   };
   const probe = (url, onOK, onFail) => { const p = new Image(); p.onload = () => { show(url); onOK && onOK(); }; p.onerror = () => onFail && onFail(); p.src = url; };
@@ -220,6 +222,7 @@ function setArt(track, cover) {
   }
   art.track = track; art.status = 'loading'; art.cover = '';
   img.classList.remove('on');
+  $('#ktv').classList.remove('has-art');
   const fail = () => { if (art.track !== track) return; art.status = 'fail'; if (art.cover) probe(art.cover); };
   if (!track.pid) return fail();
   probe(`/api/artwork?pid=${encodeURIComponent(track.pid)}&current=1`, () => { if (art.track === track) art.status = 'ok'; }, fail);
@@ -463,6 +466,7 @@ function renderFocus() {
   }
   // 上一句 / 下一句的小字会因为中间变矮而挪到新位置：让它们稍后再淡入，不和正在淡出的大字叠在一起
   if (fading.length) for (const id of ['#f-prev', '#f-next']) $(id).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 450, delay: 220, easing: 'ease-out', fill: 'backwards' });
+  renderKtv(); // KTV 样式的两行：和大字一样，当前句变了就要重画，所以挂在这里
 }
 
 // ---------------- 同步：当前行 / 逐字填充 / 进度条 ----------------
@@ -531,7 +535,7 @@ function collectFill() {
   holdTail = [...holdTail, ...(S.fill?.segs || [])].filter((s) => s.em && s.e);
   S.fill = null;
   if (!line) return;
-  const root = prefs.view === 'focus' ? $('#f-cur') : elScroll.children[S.active];
+  const root = prefs.view === 'focus' ? $('#f-cur') : prefs.view === 'ktv' ? ktvRoot(line) : elScroll.children[S.active];
   if (!root) return;
   if (line.gap) S.fill = { gap: true, line, plan: dotsPlan(line), g: $('.dots-g', root), dots: $$('.dots-g i', root).map((el) => ({ el, p: -1 })), s: '', o: '' };
   else if (line.ct) {
@@ -726,6 +730,11 @@ function tick() {
     // 唱到了就抬起来：只切一次 class，抬起的过程交给 CSS 过渡
     const on = t >= s.t0 - LIFT_LEAD;
     if (on !== s.on) { s.on = on; s.el.classList.toggle('on', on); s.rk?.classList.toggle('on', on); }
+  }
+  // 大字 → 滚动的过渡里，飞着的那句替身：填色跟着真的那一句走
+  if (morphFus) {
+    if (morphFus.a !== S.active || !morphFus.els[0]?.isConnected) morphFus = null;
+    else f.segs.forEach((s, k) => { const g = morphFus.els[k]; if (g) { g.style.setProperty('--p', s.p); g.classList.toggle('on', s.on); } });
   }
 }
 function frame() {
@@ -1023,7 +1032,7 @@ document.addEventListener('click', (e) => {
   // 修改模式同理：点在词或标注上是修改；点在这一行的其他地方跳到这一句
   if (S.mode === 'edit' && (inFocus || e.target.closest('#f-ann') || (lineEl && e.target.closest('.tok, .chip')))) return editClick(e);
   if (performance.now() - popClosedAt < 400) return; // 这一下是为了关掉读音小窗，不算点歌词
-  const near = e.target.closest('#f-prev, #f-next'); // 大字视图里的上一句 / 下一句
+  const near = e.target.closest('#f-prev, #f-next, .k-line'); // 大字视图里的上一句 / 下一句；KTV 样式里的两行
   const i = lineEl ? +lineEl.dataset.i : near && near.dataset.i !== '' ? +near.dataset.i : -1;
   const line = S.lines[i];
   if (!line || line.gap) return;
@@ -1061,6 +1070,7 @@ new MutationObserver(() => {
 
 // ---------------- 辞书模式 ----------------
 function setMode(mode) {
+  if (prefs.view === 'ktv' && S.mode !== mode) return toast('KTV 样式下不能记词 / 修改，先换回「滚动」或「大字」');
   S.mode = S.mode === mode ? null : mode;
   $('#btn-dict').classList.toggle('on', S.mode === 'dict');
   $('#btn-edit').classList.toggle('on', S.mode === 'edit');
@@ -2315,6 +2325,7 @@ $('#set-ai-run').addEventListener('click', async () => {
 function applyPrefs() {
   app.classList.toggle('view-apple', prefs.view === 'apple');
   app.classList.toggle('view-focus', prefs.view === 'focus');
+  app.classList.toggle('view-ktv', prefs.view === 'ktv');
   for (const k of ['furi', 'zh', 'roma', 'ann']) {
     app.classList.toggle(`no-${k}`, !isOn(k));
     $(`[data-toggle=${k}]`).classList.toggle('on', isOn(k));
@@ -2323,7 +2334,9 @@ function applyPrefs() {
   $('#db-char').checked = prefs.dictChar; $('#db-pause').checked = prefs.dictPause;
 }
 function setView(v) {
+  if (v === 'ktv' && S.mode) setMode(S.mode); // KTV 样式下没有记词 / 修改：先退出来
   prefs.view = v; savePrefs(); applyPrefs();
+  if (v === 'ktv') { for (const el of ktv.lines) el._line = undefined; renderKtv(true); }
   collectFill();
   requestAnimationFrame(() => scrollToActive(true));
 }
@@ -2338,10 +2351,11 @@ function animateToggle(k) {
   const place = () => {
     applyPrefs(); paintAnnotations();
     if (prefs.view === 'apple' && !elScroll.classList.contains('free')) jumpToActive();
+    fitKtv();
   };
   if (noMotion.matches || document.hidden || !S.lines.length) return place();
   const targets = () => {
-    if (prefs.view !== 'apple') return $$(TOGGLE_SEL[k], $('#focus-inner'));
+    if (prefs.view !== 'apple') return $$(TOGGLE_SEL[k], $(prefs.view === 'ktv' ? '#k-lines' : '#focus-inner'));
     const [lo, hi] = visibleRange(0), out = [];
     for (let i = lo; i <= hi; i++) out.push(...$$(TOGGLE_SEL[k], elScroll.children[i]));
     return out;
@@ -2503,7 +2517,7 @@ document.addEventListener('keydown', (e) => {
   const act = keyMap.get(normKey(e));
   if (act) { e.preventDefault(); act.run(); }
 });
-addEventListener('resize', () => scrollToActive(true));
+addEventListener('resize', () => { scrollToActive(true); fitKtv(); });
 
 let toastTimer = 0;
 // action = { label, run }：提示后面带一个按钮（比如「撤销」），这时提示多留几秒
@@ -2522,10 +2536,174 @@ function toast(msg, action) {
   toastTimer = setTimeout(() => { el.hidden = true; }, action ? 7000 : 2600);
 }
 
+// ---------------- 彩蛋：KTV 样式 ----------------
+// 入口：在资料库或词汇书的搜索框里输入「KTV Mode」回车。顶栏「大字」右边会多出一个 KTV 按钮；
+// 换回「滚动」/「大字」后按钮收起，要再输入一次才回得来。
+// 画面：中间是隔着一段距离的封面（纯 CSS，见 style.css），下面两行歌词，一行靠左、一行靠右：
+//   第 1、3、5… 句在左边那一行，第 2、4、6… 句在右边那一行（间奏不算句）。
+//   屏幕上总是「正在唱的这一句」和「下一句」；这一句唱完、轮到另一行唱时，这一行就换成下下句。
+// 这个样式下没有标注，也不能记词 / 修改。
+const ktv = { lines: $$('#k-lines .k-line') };
+const nextLyric = (i) => { for (let k = Math.max(i, -1) + 1; k < S.lines.length; k++) if (!S.lines[k].gap) return k; return -1; };
+function renderKtv(instant) {
+  if (prefs.view !== 'ktv') return;
+  if (S.active === -2 && S.lines.length) return; // 刚载入、还不知道唱到哪：等下一帧定了当前句再画，免得先闪一下开头两句
+  const a = S.active, gap = !!S.lines[a]?.gap;
+  const cur = a >= 0 && !gap ? a : nextLyric(a); // 间奏里、开唱之前：马上要唱的那一句
+  const want = [-1, -1];
+  for (const i of [cur, cur >= 0 ? nextLyric(cur) : -1]) if (i >= 0) want[(S.vis[i] - 1) % 2] = i;
+  const has = { roma: S.lines.some((l) => l.roma), zh: S.lines.some((l) => l.zh) };
+  const still = instant || noMotion.matches || document.hidden;
+  const changed = [];
+  ktv.lines.forEach((el, k) => {
+    const i = want[k], line = i >= 0 ? S.lines[i] : null;
+    if (el._line !== line) {
+      const slot = el.parentNode;
+      for (const g of $$('.k-ghost', slot)) g.remove();
+      // 换下去的那一句：留一份在原地淡出
+      if (!still && el._line) {
+        const g = el.cloneNode(true);
+        g.classList.add('k-ghost');
+        g.style.width = `${el.offsetWidth}px`;
+        $('.dots', g)?.remove();
+        slot.append(g);
+        g.animate([{ opacity: getComputedStyle(el).opacity }, { opacity: 0, transform: 'translateY(-10px)', filter: 'blur(4px)' }], { duration: 300, easing: 'ease-in', fill: 'forwards' }).onfinish = () => g.remove();
+      }
+      el._line = line; el._i = i;
+      el.dataset.i = i >= 0 ? i : '';
+      // 没有罗马音 / 翻译的句子、空着的那一行，也留出同样高的空位：两行的高矮一直不变，换词时不会上下跳
+      el.innerHTML = (line ? lineBody(line, i) : '<div class="jp">&nbsp;</div>')
+        + (has.roma && !line?.roma ? '<div class="roma">&nbsp;</div>' : '') + (has.zh && !line?.zh ? '<div class="zh">&nbsp;</div>' : '');
+      changed.push(el);
+      if (!still && line) el.animate([{ opacity: 0, transform: 'translateY(12px)' }, {}], { duration: 460, delay: 220, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'backwards' }); // 等旧的那句淡得差不多了再出来，两句不叠在一起
+    }
+    const cls = `k-line${line?.ct ? ' timed' : ''}${i >= 0 && i === a ? ' active' : ''}${gap && i === cur ? ' cue' : ''}`;
+    if (el.className !== cls) el.className = cls;
+    // 间奏的三个点：挂在马上要唱的那一句上
+    const dots = $('.dots', el), wantDots = gap && i === cur;
+    if (wantDots && !dots) el.insertAdjacentHTML('beforeend', '<span class="dots"><span class="dots-g"><i></i><i></i><i></i></span></span>');
+    else if (!wantDots && dots) dots.remove();
+  });
+  fitKtv(changed);
+}
+// 一句固定排成一排：比这一行能用的宽度长的，整句按比例缩小（--k）。行高是按没缩小的字号定的，所以缩小了也不变矮
+function fitKtv(list = ktv.lines) {
+  if (prefs.view !== 'ktv') return;
+  for (const el of list) el.style.setProperty('--k', 1);
+  const fit = list.map((el) => { const jp = $('.jp', el); return jp ? el.parentNode.clientWidth * 0.94 / jp.scrollWidth : 1; });
+  list.forEach((el, k) => { if (fit[k] < 1) el.style.setProperty('--k', Math.max(0.4, fit[k]).toFixed(3)); });
+}
+// 正在唱的那一句（间奏时：挂着三个点的那一句）在哪一行
+const ktvRoot = (line) => ktv.lines.find((el) => (line.gap ? $('.dots-g', el) : el._i === S.active));
+// 鼠标移动时整个场景跟着偏一点：封面离得远、挪得少，歌词离得近、往反方向挪一点，就有了前后的层次
+{
+  const el = $('#ktv');
+  let raf = 0, mx = 0, my = 0;
+  const put = () => { raf = 0; el.style.setProperty('--mx', mx.toFixed(3)); el.style.setProperty('--my', my.toFixed(3)); };
+  const move = (x, y) => { if (x === mx && y === my) return; mx = x; my = y; raf ||= requestAnimationFrame(put); };
+  document.addEventListener('mousemove', (e) => {
+    if (prefs.view !== 'ktv' || noMotion.matches) return;
+    move(clamp(e.clientX / innerWidth * 2 - 1, -1, 1), clamp(e.clientY / innerHeight * 2 - 1, -1, 1));
+  });
+  document.documentElement.addEventListener('mouseleave', () => move(0, 0));
+}
+// 口令。回车时先把搜索框清空（列表回到没搜索的样子，这次输入不留痕迹），再换样式
+const KTV_WORD = /^ktv\s*mode$/i;
+for (const id of ['#lib-search', '#vocab-search']) {
+  $(id).addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || composing(e) || !KTV_WORD.test(e.target.value.trim())) return;
+    e.preventDefault();
+    e.target.value = '';
+    e.target.dispatchEvent(new Event('input'));
+    e.target.blur();
+    $('#library').hidden = true; $('#vocab').hidden = true;
+    if (prefs.view !== 'ktv') setView('ktv');
+  });
+}
+
+// ---------------- 实验：大字样式下点底栏的小封面，飞到「滚动」样式 ----------------
+// 做法是 FLIP：先记下各样东西现在在哪，直接换成滚动样式，再让它们从原来的位置用弹簧动画走到新位置。
+//   - 封面：从底栏的小方块平移 + 放大到左边的大封面
+//   - 歌名 / 歌手：跟着平移、放大一点
+//   - 正在唱的那一句：从屏幕中间的大字缩小、飞到滚动歌词里它的位置（飞的是原来那句的替身，快到位时换成真的）
+//   - 进度条和按钮、其余的歌词：不飞，旧的淡出、新的淡入
+const FX_MORPH = true; // 实验性的，不想要了改成 false：点小封面就不再有反应
+const MORPH = springEasing(150, 20); // 比换行用的弹簧活一点：到位时略微过头再收回来
+let morphFus = null; // 飞行中的那句替身里的填色单位：飞的这半秒里逐字填色照常走（见 tick）
+$('#art-wrap').classList.toggle('go', FX_MORPH);
+$('#art-wrap').addEventListener('click', () => { if (FX_MORPH && prefs.view === 'focus') morphToScroll(); });
+function morphToScroll() {
+  if (S.mode || noMotion.matches || document.hidden) return setView('apple');
+  const rect = (el) => el.getBoundingClientRect();
+  const textRect = (jp) => { const r = document.createRange(); r.selectNodeContents(jp); return r.getBoundingClientRect(); };
+  const px = (el, prop) => parseFloat(getComputedStyle(el)[prop]) || 0;
+  const artEl = $('#art-wrap'), metaEl = $('#meta'), cur = $('#f-cur'), a = S.active;
+  // 之前
+  const a0 = rect(artEl), rad0 = px(artEl, 'borderTopLeftRadius'), m0 = rect(metaEl), f0 = px($('#title'), 'fontSize');
+  // 当前句的三样（日文、罗马音、翻译）各记各的：大字里是居中的，滚动样式里靠左，字号的比例也不一样，得分开飞
+  const PARTS = ['.jp', '.roma', '.zh'];
+  const measure = (root) => PARTS.map((sel) => { const el = $(sel, root); return el && el.offsetWidth ? { r: textRect(el), box: rect(el), fs: px(el, 'fontSize') } : null; });
+  const t0 = S.lines[a] && !S.lines[a].gap ? measure(cur) : null;
+  // 原来的底栏和大字各留一份替身，盖在原处（样式靠 id 和外层的 class 对上，所以外层抄一份 #app 的 class）
+  $('#morph-ghost')?.remove();
+  const ghost = document.createElement('div');
+  ghost.id = 'morph-ghost'; ghost.className = app.className; ghost.setAttribute('aria-hidden', 'true');
+  for (const id of ['#player', '#focus']) {
+    const src = $(id), r = rect(src), c = src.cloneNode(true);
+    c.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;`;
+    ghost.append(c);
+  }
+  // 换成滚动样式
+  prefs.view = 'apple'; savePrefs(); applyPrefs();
+  clearTimeout(freeTimer); elScroll.classList.remove('free');
+  for (const an of glideAnims) an.cancel();
+  glideAnims = [];
+  collectFill();
+  jumpToActive();
+  document.body.append(ghost);
+  // 之后
+  const a1 = rect(artEl), m1 = rect(metaEl), f1 = px($('#title'), 'fontSize'), s = a0.width / a1.width;
+  const opt = { duration: MORPH.ms, easing: MORPH.easing };
+  artEl.style.zIndex = 3;
+  artEl.animate([
+    { transformOrigin: '0 0', transform: `translate(${a0.left - a1.left}px, ${a0.top - a1.top}px) scale(${s})`, borderRadius: `${rad0 / s}px` },
+    { transformOrigin: '0 0', transform: 'none', borderRadius: `${px(artEl, 'borderTopLeftRadius')}px` },
+  ], opt).onfinish = () => { artEl.style.zIndex = ''; };
+  metaEl.animate([{ transformOrigin: '0 0', transform: `translate(${m0.left - m1.left}px, ${m0.top - m1.top}px) scale(${f0 / f1})` }, { transformOrigin: '0 0', transform: 'none' }], opt);
+  const fadeOut = (el) => el.animate([{}, { opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
+  fadeOut(ghost.children[0]);
+  $('#transport').animate([{ opacity: 0 }, {}], { duration: 420, delay: 180, easing: 'ease-out', fill: 'backwards' });
+  const gcur = $('#f-cur', ghost), lineEl = elScroll.children[a];
+  const t1 = t0?.[0] && lineEl ? measure(lineEl) : null;
+  const jp1 = !!t1?.[0];
+  for (const el of $$('#f-prev, #f-ann, #f-next', ghost)) fadeOut(el);
+  if (jp1) {
+    PARTS.forEach((sel, k) => {
+      const g = $(sel, gcur), p = t0[k], q = t1[k];
+      if (!g || !p) return;
+      if (!q) return void fadeOut(g); // 滚动样式里没有这一样：原地淡掉
+      const o = `${p.r.left - p.box.left}px ${p.r.top - p.box.top}px`;
+      g.animate([{ transformOrigin: o, transform: 'none' }, { transformOrigin: o, transform: `translate(${q.r.left - p.r.left}px, ${q.r.top - p.r.top}px) scale(${q.fs / p.fs})` }], { ...opt, fill: 'forwards' });
+    });
+    // 真的那一句先在替身底下淡入（两个叠着，看不出来），替身最后才淡掉
+    gcur.animate([{ opacity: 1 }, { opacity: 1, offset: 0.78 }, { opacity: 0 }], { duration: MORPH.ms, fill: 'forwards' });
+    lineEl.animate([{ opacity: 0 }, { opacity: 0, offset: 0.45 }, { opacity: 1, offset: 0.78 }, {}], { duration: MORPH.ms });
+    morphFus = { a, els: $$('.fu', gcur) };
+  } else fadeOut(gcur);
+  // 其余的歌词：离当前句越远的越晚一点浮现
+  const [lo, hi] = visibleRange(0);
+  for (let k = lo; k <= hi; k++) {
+    if (jp1 && k === a) continue;
+    elScroll.children[k].animate([{ opacity: 0, translate: '0 14px' }, {}], { duration: 520, delay: 140 + Math.min(Math.abs(k - a), 8) * 45, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'backwards' });
+  }
+  setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].isConnected) morphFus = null; }, MORPH.ms + 60);
+}
+
 // ---------------- 使用指引 ----------------
 // 第一次打开时自动放一遍；看完或跳过就记在偏好里（prefs.guide），以后只在设置里点「再看一遍」才出现。
 // 它只认这一个记号，和词汇书、读音修正这些数据没有关系。
 function showGuide() {
+  if (prefs.view === 'ktv') setView('apple'); // 指引讲的是滚动 / 大字两个样式，KTV 样式下没有它要指的东西
   $$('.modal, .drawer, .popover').forEach((el) => { el.hidden = true; });
   $('#btn-menu').classList.remove('on');
   hideSensePop();
@@ -2566,4 +2744,4 @@ requestAnimationFrame(frame);
   if (q.has('guide') || (!prefs.guide && !q.has('debug'))) setTimeout(showGuide, 900);
 }
 // 调试入口：地址加 ?debug 后可在控制台用 __uta.onState(...) 模拟播放状态
-if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs, tick, stepReading }; }
+if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs, tick, stepReading, setView }; }

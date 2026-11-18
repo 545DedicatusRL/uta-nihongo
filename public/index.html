@@ -24,6 +24,8 @@
     <div class="group" role="group" aria-label="歌词样式">
       <button class="seg-btn" data-view="apple" title="滚动歌词（F 切换）">滚动</button>
       <button class="seg-btn" data-view="focus" title="大字单句（F 切换）">大字</button>
+      <!-- 彩蛋：在搜索框里输入 KTV Mode 回车才会出现；换回别的样式它就收起来 -->
+      <span class="ktv-slot"><span><button class="seg-btn" data-view="ktv" title="KTV 样式（彩蛋）">KTV</button></span></span>
     </div>
     <div class="group">
       <button class="seg-btn" id="btn-dict" title="记词模式：点选歌词片段加入词汇书（D）">记词</button>
@@ -66,6 +68,22 @@
         <div class="f-cur" id="f-cur"></div>
         <div class="f-ann" id="f-ann"></div>
         <div class="f-next" id="f-next"></div>
+      </div>
+    </section>
+
+    <!-- 彩蛋：KTV 样式。中间是「隔着一段距离」的封面，下面两行歌词一左一右交替 -->
+    <section id="ktv">
+      <div id="k-scene"><div id="k-rig">
+        <div class="k-far l"><img class="art-copy" alt=""></div>
+        <div class="k-far r"><img class="art-copy" alt=""></div>
+        <div id="k-stack">
+          <div id="k-cover"><img class="art-copy" alt=""></div>
+          <div id="k-refl"><img class="art-copy" alt=""></div>
+        </div>
+      </div></div>
+      <div id="k-lines">
+        <div class="k-slot a"><div class="k-line"></div></div>
+        <div class="k-slot b"><div class="k-line"></div></div>
       </div>
     </section>
 
