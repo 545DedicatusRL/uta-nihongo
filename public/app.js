@@ -2688,10 +2688,10 @@ for (const id of ['#lib-search', '#vocab-search']) {
 //       落地时这一份和真的那一句完全重合，直接换过去，看不出来。罗马音、翻译各自整行飞
 //   - 进度条和按钮、其余的歌词：不飞，旧的淡出、新的淡入
 const FX_MORPH = true; // 实验性的，不想要了改成 false：点封面没有反应，按钮和快捷键回到直接切换
-const MORPH = springEasing(150, 21.5); // 封面、歌名用的：比换行的弹簧活一点，到位时略微过头一点点（约 0.2%）再收回来
-// 歌词用的：临界阻尼，一点都不过头。字是一个个各飞各的，飞得远的过头得多、近的过头得少，
-// 整句看上去会先挤一下再松开（还带着缩放），哪怕只有一两个像素也显得「弹」。快慢调到和上面那条差不多同时到位
-const MORPH_TEXT = springEasing(230, 30.4);
+// 过渡用的弹簧：临界阻尼，到位时一点都不过头。封面、歌名、歌词都用这一条。
+// 试过略微过头一点（约 0.2%）的：歌词是一个个字各飞各的，飞得远的过头得多、近的过头得少，
+// 整句看上去会先挤一下再松开（还带着缩放），哪怕只有一两个像素也显得「弹」；封面单独留着回弹也不协调，就都去掉了
+const MORPH = springEasing(230, 30.4);
 let morphFus = null; // 飞着的那一份里的填色单位：飞的这半秒里逐字填色照常走（见 tick）
 const flatView = (v) => v === 'apple' || v === 'focus';
 $('#art-wrap').classList.toggle('go', FX_MORPH);
@@ -2767,7 +2767,7 @@ function morphView(to) {
   // 之后
   const a1 = rect(artEl), m1 = rect(metaEl), f1 = px($('#title'), 'fontSize'), s = a0.width / a1.width;
   const opt = { duration: MORPH.ms, easing: MORPH.easing };
-  const optT = { duration: MORPH_TEXT.ms, easing: MORPH_TEXT.easing, fill: 'both' };
+  const optT = { ...opt, fill: 'both' }; // 飞着的字、标注线：飞完停在落点上，等真的那一句换上来
   artEl.style.zIndex = 3;
   artEl.animate([
     { transformOrigin: '0 0', transform: `translate(${a0.left - a1.left}px, ${a0.top - a1.top}px) scale(${s})`, borderRadius: `${rad0 / s}px`, boxShadow: scalePx(sh0, s) },
@@ -2862,7 +2862,7 @@ function morphView(to) {
     const gOld = toScroll ? $('#f-cur', ghost) : $('#scroll', ghost).children[a];
     let hide = null;
     for (const sel of PARTS) {
-      hide = $(sel, newLine)?.animate([{ opacity: 0 }, { opacity: 0 }], { duration: MORPH_TEXT.ms }) || hide;
+      hide = $(sel, newLine)?.animate([{ opacity: 0 }, { opacity: 0 }], { duration: MORPH.ms }) || hide;
       const g = gOld && $(sel, gOld);
       if (g) g.style.visibility = 'hidden';
     }
@@ -2888,7 +2888,7 @@ function morphView(to) {
     for (const id of ['#f-prev', '#f-ann', '#f-next']) fadeIn($(id), 240);
   }
   // 收尾：别的替身这时早就淡完了，连同外层一起撤掉（飞的那一份在落地的那一帧已经自己撤了，见上）
-  setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].el.isConnected) morphFus = null; }, Math.max(MORPH.ms, MORPH_TEXT.ms) + 60);
+  setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].el.isConnected) morphFus = null; }, MORPH.ms + 60);
 }
 
 // ---------------- 使用指引 ----------------
