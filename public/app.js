@@ -32,6 +32,9 @@ const DEFAULT_PREFS = {
   dictChar: false, dictPause: true, meaningLang: 'zh', autoSense: true,
   fxHold: false, // 实验功能：长音强调（默认关，在设置里打开）
   fxGroup: false, // 实验功能 2：紧凑的几句一起显示（默认关，在设置里打开）
+  // 设置里的「减少动画」（默认关）。开了以后：用顶栏按钮、快捷键切换滚动 / 大字时直接切换，只有点封面才播放过渡；
+  // KTV 样式的背景不跟着鼠标动。别的动画（换行、标注、开关的过渡…）不受它管
+  lessMotion: false,
 };
 let prefs = { ...DEFAULT_PREFS };
 try { const saved = JSON.parse(localStorage.getItem('uta-prefs') || '{}'); prefs = { ...prefs, ...saved, levels: { ...prefs.levels, ...(saved.levels || {}) } }; } catch { /* 无痕模式等 */ }
@@ -2217,6 +2220,7 @@ async function openSettings() {
   $('#set-autosense').checked = prefs.autoSense !== false;
   $('#set-fx-hold').checked = !!prefs.fxHold;
   $('#set-fx-group').checked = !!prefs.fxGroup;
+  $('#set-less-motion').checked = !!prefs.lessMotion;
   const picked = Object.keys(S.senses || {}).length;
   $('#set-clear-senses').hidden = !picked;
   $('#set-clear-senses').textContent = `清除这首歌里手动选的 ${picked} 个`;
@@ -2261,6 +2265,7 @@ $('#set-clear-senses').addEventListener('click', async () => {
   toast('已清除，这首歌的多义词恢复自动选义');
 });
 $('#set-fx-hold').addEventListener('change', (e) => { prefs.fxHold = e.target.checked; savePrefs(); collectFill(); });
+$('#set-less-motion').addEventListener('change', (e) => { prefs.lessMotion = e.target.checked; savePrefs(); if (prefs.lessMotion) ktvTilt(0, 0, true); });
 $('#set-fx-group').addEventListener('change', (e) => { prefs.fxGroup = e.target.checked; savePrefs(); markGroups(); if (S.lines.length && S.active > -2) setActive(S.active); });
 for (const id of ['set-style', 'set-max', 'set-grammar', 'set-vocabs', 'set-source', 'set-lang', 'set-autosense', 'set-levels']) $(`#${id}`).addEventListener('input', onAnnPrefChange);
 async function saveSettings() {
@@ -2350,8 +2355,9 @@ function setView(v) {
   collectFill();
   requestAnimationFrame(() => scrollToActive(true));
 }
-// 滚动 ⇄ 大字 之间带过渡动画（见 morphView），其余的直接切换
-$$('[data-view]').forEach((b) => b.addEventListener('click', () => morphView(b.dataset.view)));
+// 滚动 ⇄ 大字 之间带过渡动画（见 morphView），其余的直接切换；设置里开了「减少动画」的话都直接切换
+const switchView = (v) => (prefs.lessMotion ? setView : morphView)(v);
+$$('[data-view]').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
 // 显示开关（假名 / 中文翻译 / 罗马音 / 标注）切换时的过渡：
 //   关：屏幕上看得见的那些先原地淡出（这时还占着位置），淡完再真的收起，其余各行滑到新位置
 //   开：各行先滑开腾出位置，新出现的跟着淡入
@@ -2442,7 +2448,7 @@ function stepLine(dir) {
 // [编号, 名称, 默认按键, 做什么]。默认按键为空 = 默认不设，想用的话自己指定
 const KEY_ACTIONS = [
   ['playpause', '播放 / 暂停', ' ', () => control('playpause')],
-  ['view', '切换 滚动 / 大字', 'f', () => morphView(prefs.view === 'apple' ? 'focus' : 'apple')],
+  ['view', '切换 滚动 / 大字', 'f', () => switchView(prefs.view === 'apple' ? 'focus' : 'apple')],
   ['prevLine', '上一句', 'ArrowLeft', () => stepLine(-1)],
   ['nextLine', '下一句', 'ArrowRight', () => stepLine(1)],
   ['dict', '记词模式', 'd', () => setMode('dict')],
@@ -2626,22 +2632,27 @@ function fitKtv(list = ktv.lines) {
 const ktvRoot = (line) => ktv.lines.find((el) => (line.gap ? $('.dots-g', el) : el._i === S.active));
 // 鼠标移动时整个场景跟着偏一点：封面离得远、挪得少，歌词离得近、往反方向挪一点，就有了前后的层次。
 // 鼠标 KTV_REST 毫秒没动：非常慢地转回正面（封面完全不歪的样子），慢到不容易察觉；鼠标一动又跟上
+// 设置里开了「减少动画」：不跟着鼠标动，场景一直是正面的
 const KTV_REST = 5000;
-{
+// ktvTilt(x, y, quick)：让场景偏到 (x, y)（各自 -1 到 1，0 是正面）。quick = 用平常的快慢过去，而不是「慢慢转回正面」那种慢
+const ktvTilt = (() => {
   const el = $('#ktv');
   let raf = 0, mx = 0, my = 0, rest = 0, lx = -1, ly = -1;
   const put = () => { raf = 0; el.style.setProperty('--mx', mx.toFixed(3)); el.style.setProperty('--my', my.toFixed(3)); };
-  const move = (x, y) => { if (x === mx && y === my) return; mx = x; my = y; raf ||= requestAnimationFrame(put); };
+  const move = (x, y, quick) => {
+    if (quick) { clearTimeout(rest); el.classList.remove('rest'); }
+    if (x === mx && y === my) return;
+    mx = x; my = y; raf ||= requestAnimationFrame(put);
+  };
   document.addEventListener('mousemove', (e) => {
-    if (prefs.view !== 'ktv' || noMotion.matches) return;
+    if (prefs.view !== 'ktv' || prefs.lessMotion || noMotion.matches) return;
     if (e.clientX === lx && e.clientY === ly) return; // 鼠标没动、只是底下的东西变了，浏览器也会发这个事件：不算
     lx = e.clientX; ly = e.clientY;
-    el.classList.remove('rest');
-    move(clamp(lx / innerWidth * 2 - 1, -1, 1), clamp(ly / innerHeight * 2 - 1, -1, 1));
-    clearTimeout(rest);
+    move(clamp(lx / innerWidth * 2 - 1, -1, 1), clamp(ly / innerHeight * 2 - 1, -1, 1), true);
     rest = setTimeout(() => { el.classList.add('rest'); move(0, 0); }, KTV_REST);
   });
-}
+  return move;
+})();
 // 口令。回车时先把搜索框清空（列表回到没搜索的样子，这次输入不留痕迹），再换样式
 const KTV_WORD = /^ktv\s*mode$/i;
 for (const id of ['#lib-search', '#vocab-search']) {
