@@ -2340,7 +2340,8 @@ function setView(v) {
   collectFill();
   requestAnimationFrame(() => scrollToActive(true));
 }
-$$('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+// 滚动 ⇄ 大字 之间带过渡动画（见 morphView），其余的直接切换
+$$('[data-view]').forEach((b) => b.addEventListener('click', () => morphView(b.dataset.view)));
 // 显示开关（假名 / 中文翻译 / 罗马音 / 标注）切换时的过渡：
 //   关：屏幕上看得见的那些先原地淡出（这时还占着位置），淡完再真的收起，其余各行滑到新位置
 //   开：各行先滑开腾出位置，新出现的跟着淡入
@@ -2429,7 +2430,7 @@ function stepLine(dir) {
 // [编号, 名称, 默认按键, 做什么]。默认按键为空 = 默认不设，想用的话自己指定
 const KEY_ACTIONS = [
   ['playpause', '播放 / 暂停', ' ', () => control('playpause')],
-  ['view', '切换 滚动 / 大字', 'f', () => setView(prefs.view === 'apple' ? 'focus' : 'apple')],
+  ['view', '切换 滚动 / 大字', 'f', () => morphView(prefs.view === 'apple' ? 'focus' : 'apple')],
   ['prevLine', '上一句', 'ArrowLeft', () => stepLine(-1)],
   ['nextLine', '下一句', 'ArrowRight', () => stepLine(1)],
   ['dict', '记词模式', 'd', () => setMode('dict')],
@@ -2542,21 +2543,32 @@ function toast(msg, action) {
 // 画面：中间是隔着一段距离的封面（纯 CSS，见 style.css），下面两行歌词，一行靠左、一行靠右：
 //   第 1、3、5… 句在左边那一行，第 2、4、6… 句在右边那一行（间奏不算句）。
 //   屏幕上总是「正在唱的这一句」和「下一句」；这一句唱完、轮到另一行唱时，这一行就换成下下句。
+// 间奏的三个点总是在上面那一行：
+//   - 马上要唱的是上面那行：点挂在那一句的上方，中间那个点对着第一个字的正中
+//   - 马上要唱的是下面那行（间奏前唱的是上面那句）：上面那句唱完后原地换成三个点，
+//     等间奏结束、下面那行开唱了，上面再换成下下句
+//   间奏期间马上要唱的那一句不提前变亮，唱到了才亮。
 // 这个样式下没有标注，也不能记词 / 修改。
 const ktv = { lines: $$('#k-lines .k-line') };
+const DOTS_HTML = '<span class="dots"><span class="dots-g"><i></i><i></i><i></i></span></span>';
 const nextLyric = (i) => { for (let k = Math.max(i, -1) + 1; k < S.lines.length; k++) if (!S.lines[k].gap) return k; return -1; };
 function renderKtv(instant) {
   if (prefs.view !== 'ktv') return;
   if (S.active === -2 && S.lines.length) return; // 刚载入、还不知道唱到哪：等下一帧定了当前句再画，免得先闪一下开头两句
-  const a = S.active, gap = !!S.lines[a]?.gap;
-  const cur = a >= 0 && !gap ? a : nextLyric(a); // 间奏里、开唱之前：马上要唱的那一句
-  const want = [-1, -1];
-  for (const i of [cur, cur >= 0 ? nextLyric(cur) : -1]) if (i >= 0) want[(S.vis[i] - 1) % 2] = i;
+  const a = S.active, gapLine = S.lines[a]?.gap ? S.lines[a] : null;
+  const cur = a >= 0 && !gapLine ? a : nextLyric(a); // 间奏里、开唱之前：马上要唱的那一句
+  const row = (i) => (S.vis[i] - 1) % 2; // 这一句在哪一行：0 上面（靠左），1 下面（靠右）
+  const solo = !!gapLine && cur >= 0 && row(cur) === 1; // 间奏、马上要唱的在下面：上面那行只放三个点
+  const want = [null, null];
+  if (cur >= 0) want[row(cur)] = cur;
+  const nx = cur >= 0 ? nextLyric(cur) : -1;
+  if (nx >= 0 && !solo) want[row(nx)] = nx;
   const has = { roma: S.lines.some((l) => l.roma), zh: S.lines.some((l) => l.zh) };
   const still = instant || noMotion.matches || document.hidden;
   const changed = [];
   ktv.lines.forEach((el, k) => {
-    const i = want[k], line = i >= 0 ? S.lines[i] : null;
+    const i = want[k] ?? -1, alone = solo && k === 0;
+    const line = alone ? gapLine : i >= 0 ? S.lines[i] : null; // 这一行放的东西：一句歌词，或者（alone）这段间奏的三个点
     if (el._line !== line) {
       const slot = el.parentNode;
       for (const g of $$('.k-ghost', slot)) g.remove();
@@ -2565,24 +2577,24 @@ function renderKtv(instant) {
         const g = el.cloneNode(true);
         g.classList.add('k-ghost');
         g.style.width = `${el.offsetWidth}px`;
-        $('.dots', g)?.remove();
+        $(':scope > .dots', g)?.remove();
         slot.append(g);
-        g.animate([{ opacity: getComputedStyle(el).opacity }, { opacity: 0, transform: 'translateY(-10px)', filter: 'blur(4px)' }], { duration: 300, easing: 'ease-in', fill: 'forwards' }).onfinish = () => g.remove();
+        g.animate([{ opacity: 1 }, { opacity: 0, transform: 'translateY(-10px)', filter: 'blur(4px)' }], { duration: 300, easing: 'ease-in', fill: 'forwards' }).onfinish = () => g.remove();
       }
       el._line = line; el._i = i;
       el.dataset.i = i >= 0 ? i : '';
-      // 没有罗马音 / 翻译的句子、空着的那一行，也留出同样高的空位：两行的高矮一直不变，换词时不会上下跳
-      el.innerHTML = (line ? lineBody(line, i) : '<div class="jp">&nbsp;</div>')
-        + (has.roma && !line?.roma ? '<div class="roma">&nbsp;</div>' : '') + (has.zh && !line?.zh ? '<div class="zh">&nbsp;</div>' : '');
+      // 没有罗马音 / 翻译的句子、空着的那一行、只有三个点的那一行，也留出同样高的空位：两行的高矮一直不变，换词时不会上下跳
+      el.innerHTML = (alone ? `<div class="jp">${DOTS_HTML}</div>` : line ? lineBody(line, i) : '<div class="jp">&nbsp;</div>')
+        + (has.roma && !(!alone && line?.roma) ? '<div class="roma">&nbsp;</div>' : '') + (has.zh && !(!alone && line?.zh) ? '<div class="zh">&nbsp;</div>' : '');
       changed.push(el);
-      if (!still && line) el.animate([{ opacity: 0, transform: 'translateY(12px)' }, {}], { duration: 460, delay: 220, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'backwards' }); // 等旧的那句淡得差不多了再出来，两句不叠在一起
+      if (!still && line && !alone) el.animate([{ opacity: 0, transform: 'translateY(12px)' }, {}], { duration: 460, delay: 220, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'backwards' }); // 等旧的那句淡得差不多了再出来，两句不叠在一起
     }
-    const cls = `k-line${line?.ct ? ' timed' : ''}${i >= 0 && i === a ? ' active' : ''}${gap && i === cur ? ' cue' : ''}`;
+    const cls = `k-line${!alone && line?.ct ? ' timed' : ''}${i >= 0 && i === a ? ' active' : ''}${alone ? ' solo' : ''}`;
     if (el.className !== cls) el.className = cls;
-    // 间奏的三个点：挂在马上要唱的那一句上
-    const dots = $('.dots', el), wantDots = gap && i === cur;
-    if (wantDots && !dots) el.insertAdjacentHTML('beforeend', '<span class="dots"><span class="dots-g"><i></i><i></i><i></i></span></span>');
-    else if (!wantDots && dots) dots.remove();
+    // 马上要唱的是上面这一行：三个点挂在这一句的上方
+    const dots = $(':scope > .dots', el), over = !!gapLine && !solo && i === cur;
+    if (over && !dots) el.insertAdjacentHTML('beforeend', DOTS_HTML);
+    else if (!over && dots) dots.remove();
   });
   fitKtv(changed);
 }
@@ -2592,20 +2604,31 @@ function fitKtv(list = ktv.lines) {
   for (const el of list) el.style.setProperty('--k', 1);
   const fit = list.map((el) => { const jp = $('.jp', el); return jp ? el.parentNode.clientWidth * 0.94 / jp.scrollWidth : 1; });
   list.forEach((el, k) => { if (fit[k] < 1) el.style.setProperty('--k', Math.max(0.4, fit[k]).toFixed(3)); });
+  // 挂在句子上方的三个点：中间那个点对着第一个字的正中（--dx）
+  for (const el of ktv.lines) {
+    const ch = $(':scope > .dots', el) && $('.jp .ch', el);
+    if (ch) { const r = ch.getBoundingClientRect(); el.style.setProperty('--dx', `${(r.left + r.width / 2 - el.getBoundingClientRect().left).toFixed(1)}px`); }
+  }
 }
-// 正在唱的那一句（间奏时：挂着三个点的那一句）在哪一行
+// 正在唱的那一句（间奏时：有三个点的那一行）在哪一行
 const ktvRoot = (line) => ktv.lines.find((el) => (line.gap ? $('.dots-g', el) : el._i === S.active));
-// 鼠标移动时整个场景跟着偏一点：封面离得远、挪得少，歌词离得近、往反方向挪一点，就有了前后的层次
+// 鼠标移动时整个场景跟着偏一点：封面离得远、挪得少，歌词离得近、往反方向挪一点，就有了前后的层次。
+// 鼠标 KTV_REST 毫秒没动：非常慢地转回正面（封面完全不歪的样子），慢到不容易察觉；鼠标一动又跟上
+const KTV_REST = 5000;
 {
   const el = $('#ktv');
-  let raf = 0, mx = 0, my = 0;
+  let raf = 0, mx = 0, my = 0, rest = 0, lx = -1, ly = -1;
   const put = () => { raf = 0; el.style.setProperty('--mx', mx.toFixed(3)); el.style.setProperty('--my', my.toFixed(3)); };
   const move = (x, y) => { if (x === mx && y === my) return; mx = x; my = y; raf ||= requestAnimationFrame(put); };
   document.addEventListener('mousemove', (e) => {
     if (prefs.view !== 'ktv' || noMotion.matches) return;
-    move(clamp(e.clientX / innerWidth * 2 - 1, -1, 1), clamp(e.clientY / innerHeight * 2 - 1, -1, 1));
+    if (e.clientX === lx && e.clientY === ly) return; // 鼠标没动、只是底下的东西变了，浏览器也会发这个事件：不算
+    lx = e.clientX; ly = e.clientY;
+    el.classList.remove('rest');
+    move(clamp(lx / innerWidth * 2 - 1, -1, 1), clamp(ly / innerHeight * 2 - 1, -1, 1));
+    clearTimeout(rest);
+    rest = setTimeout(() => { el.classList.add('rest'); move(0, 0); }, KTV_REST);
   });
-  document.documentElement.addEventListener('mouseleave', () => move(0, 0));
 }
 // 口令。回车时先把搜索框清空（列表回到没搜索的样子，这次输入不留痕迹），再换样式
 const KTV_WORD = /^ktv\s*mode$/i;
@@ -2621,80 +2644,112 @@ for (const id of ['#lib-search', '#vocab-search']) {
   });
 }
 
-// ---------------- 实验：大字样式下点底栏的小封面，飞到「滚动」样式 ----------------
-// 做法是 FLIP：先记下各样东西现在在哪，直接换成滚动样式，再让它们从原来的位置用弹簧动画走到新位置。
-//   - 封面：从底栏的小方块平移 + 放大到左边的大封面
-//   - 歌名 / 歌手：跟着平移、放大一点
-//   - 正在唱的那一句：从屏幕中间的大字缩小、飞到滚动歌词里它的位置（飞的是原来那句的替身，快到位时换成真的）
+// ---------------- 实验：滚动 ⇄ 大字 的过渡，封面飞过去 ----------------
+// 触发：大字样式下点底栏的小封面 → 滚动；滚动样式下点大封面 → 大字；顶栏的「滚动 / 大字」按钮和快捷键也走这里。
+// 做法是 FLIP：先记下各样东西现在在哪，直接换成另一个样式，再让它们从原来的位置用弹簧动画走到新位置。
+//   - 封面：平移 + 放大 / 缩小（圆角和阴影按比例折算，飞的途中看着是同一块东西）
+//   - 歌名 / 歌手：跟着平移、缩放一点
+//   - 正在唱的那一句：日文、罗马音、翻译各自在「屏幕中间的大字」和「滚动歌词里它的位置」之间飞
+//       去滚动：飞的是原来那句的替身（滚动歌词的框会把飞出框外的部分裁掉，真的那句飞不了），快到位时换成真的
+//       去大字：飞的就是真的那句
 //   - 进度条和按钮、其余的歌词：不飞，旧的淡出、新的淡入
-const FX_MORPH = true; // 实验性的，不想要了改成 false：点小封面就不再有反应
-const MORPH = springEasing(150, 20); // 比换行用的弹簧活一点：到位时略微过头再收回来
-let morphFus = null; // 飞行中的那句替身里的填色单位：飞的这半秒里逐字填色照常走（见 tick）
+const FX_MORPH = true; // 实验性的，不想要了改成 false：点封面没有反应，按钮和快捷键回到直接切换
+const MORPH = springEasing(150, 21.5); // 比换行用的弹簧活一点：到位时只略微过头一点点（约 0.3%）
+let morphFus = null; // 去滚动时飞行中的那句替身里的填色单位：飞的这半秒里逐字填色照常走（见 tick）
+const flatView = (v) => v === 'apple' || v === 'focus';
 $('#art-wrap').classList.toggle('go', FX_MORPH);
-$('#art-wrap').addEventListener('click', () => { if (FX_MORPH && prefs.view === 'focus') morphToScroll(); });
-function morphToScroll() {
-  if (S.mode || noMotion.matches || document.hidden) return setView('apple');
+$('#art-wrap').addEventListener('click', () => { if (FX_MORPH && flatView(prefs.view)) morphView(prefs.view === 'focus' ? 'apple' : 'focus'); });
+function morphView(to) {
+  const from = prefs.view;
+  if (from === to) return;
+  if (!FX_MORPH || !flatView(from) || !flatView(to) || S.mode || noMotion.matches || document.hidden) return setView(to);
+  const toScroll = to === 'apple';
   const rect = (el) => el.getBoundingClientRect();
-  const textRect = (jp) => { const r = document.createRange(); r.selectNodeContents(jp); return r.getBoundingClientRect(); };
+  const textRect = (el) => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect(); };
   const px = (el, prop) => parseFloat(getComputedStyle(el)[prop]) || 0;
+  const scalePx = (str, k) => str.replace(/(-?[\d.]+)px/g, (_, n) => `${(n / k).toFixed(2)}px`);
   const artEl = $('#art-wrap'), metaEl = $('#meta'), cur = $('#f-cur'), a = S.active;
-  // 之前
-  const a0 = rect(artEl), rad0 = px(artEl, 'borderTopLeftRadius'), m0 = rect(metaEl), f0 = px($('#title'), 'fontSize');
   // 当前句的三样（日文、罗马音、翻译）各记各的：大字里是居中的，滚动样式里靠左，字号的比例也不一样，得分开飞
   const PARTS = ['.jp', '.roma', '.zh'];
   const measure = (root) => PARTS.map((sel) => { const el = $(sel, root); return el && el.offsetWidth ? { r: textRect(el), box: rect(el), fs: px(el, 'fontSize') } : null; });
-  const t0 = S.lines[a] && !S.lines[a].gap ? measure(cur) : null;
-  // 原来的底栏和大字各留一份替身，盖在原处（样式靠 id 和外层的 class 对上，所以外层抄一份 #app 的 class）
+  // 之前
+  const a0 = rect(artEl), rad0 = px(artEl, 'borderTopLeftRadius'), sh0 = getComputedStyle(artEl).boxShadow, m0 = rect(metaEl), f0 = px($('#title'), 'fontSize');
+  const oldLine = toScroll ? cur : elScroll.children[a];
+  let t0 = S.lines[a] && !S.lines[a].gap && oldLine ? measure(oldLine) : null;
+  if (t0?.[0] && !toScroll) { const box = rect($('#lyrics')); if (t0[0].r.bottom < box.top || t0[0].r.top > box.bottom) t0 = null; } // 自己划走了、当前句不在屏幕上：这一句不飞
+  // 原来的播放器和歌词各留一份替身，盖在原处（样式靠 id 和外层的 class 对上，所以外层抄一份 #app 的 class）
   $('#morph-ghost')?.remove();
   const ghost = document.createElement('div');
   ghost.id = 'morph-ghost'; ghost.className = app.className; ghost.setAttribute('aria-hidden', 'true');
-  for (const id of ['#player', '#focus']) {
+  for (const id of ['#player', toScroll ? '#focus' : '#lyrics']) {
     const src = $(id), r = rect(src), c = src.cloneNode(true);
     c.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;`;
     ghost.append(c);
   }
-  // 换成滚动样式
-  prefs.view = 'apple'; savePrefs(); applyPrefs();
+  const scroll0 = elScroll.scrollTop;
+  // 换样式
+  prefs.view = to; savePrefs(); applyPrefs();
   clearTimeout(freeTimer); elScroll.classList.remove('free');
   for (const an of glideAnims) an.cancel();
   glideAnims = [];
   collectFill();
   jumpToActive();
+  cur.style.animation = 'none'; // 大字那句自带的「浮上来」这次不要，会和飞行打架（下次换句时 renderFocus 会把它恢复）
   document.body.append(ghost);
+  if (!toScroll) $('#scroll', ghost).scrollTop = scroll0; // 复制出来的滚动框不带滚动位置
   // 之后
   const a1 = rect(artEl), m1 = rect(metaEl), f1 = px($('#title'), 'fontSize'), s = a0.width / a1.width;
   const opt = { duration: MORPH.ms, easing: MORPH.easing };
   artEl.style.zIndex = 3;
   artEl.animate([
-    { transformOrigin: '0 0', transform: `translate(${a0.left - a1.left}px, ${a0.top - a1.top}px) scale(${s})`, borderRadius: `${rad0 / s}px` },
-    { transformOrigin: '0 0', transform: 'none', borderRadius: `${px(artEl, 'borderTopLeftRadius')}px` },
+    { transformOrigin: '0 0', transform: `translate(${a0.left - a1.left}px, ${a0.top - a1.top}px) scale(${s})`, borderRadius: `${rad0 / s}px`, boxShadow: scalePx(sh0, s) },
+    { transformOrigin: '0 0', transform: 'none', borderRadius: `${px(artEl, 'borderTopLeftRadius')}px`, boxShadow: getComputedStyle(artEl).boxShadow },
   ], opt).onfinish = () => { artEl.style.zIndex = ''; };
   metaEl.animate([{ transformOrigin: '0 0', transform: `translate(${m0.left - m1.left}px, ${m0.top - m1.top}px) scale(${f0 / f1})` }, { transformOrigin: '0 0', transform: 'none' }], opt);
   const fadeOut = (el) => el.animate([{}, { opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
+  const fadeIn = (el, delay = 180) => el.animate([{ opacity: 0 }, {}], { duration: 420, delay, easing: 'ease-out', fill: 'backwards' });
   fadeOut(ghost.children[0]);
-  $('#transport').animate([{ opacity: 0 }, {}], { duration: 420, delay: 180, easing: 'ease-out', fill: 'backwards' });
-  const gcur = $('#f-cur', ghost), lineEl = elScroll.children[a];
-  const t1 = t0?.[0] && lineEl ? measure(lineEl) : null;
-  const jp1 = !!t1?.[0];
-  for (const el of $$('#f-prev, #f-ann, #f-next', ghost)) fadeOut(el);
-  if (jp1) {
-    PARTS.forEach((sel, k) => {
-      const g = $(sel, gcur), p = t0[k], q = t1[k];
-      if (!g || !p) return;
-      if (!q) return void fadeOut(g); // 滚动样式里没有这一样：原地淡掉
-      const o = `${p.r.left - p.box.left}px ${p.r.top - p.box.top}px`;
-      g.animate([{ transformOrigin: o, transform: 'none' }, { transformOrigin: o, transform: `translate(${q.r.left - p.r.left}px, ${q.r.top - p.r.top}px) scale(${q.fs / p.fs})` }], { ...opt, fill: 'forwards' });
-    });
-    // 真的那一句先在替身底下淡入（两个叠着，看不出来），替身最后才淡掉
-    gcur.animate([{ opacity: 1 }, { opacity: 1, offset: 0.78 }, { opacity: 0 }], { duration: MORPH.ms, fill: 'forwards' });
-    lineEl.animate([{ opacity: 0 }, { opacity: 0, offset: 0.45 }, { opacity: 1, offset: 0.78 }, {}], { duration: MORPH.ms });
-    morphFus = { a, els: $$('.fu', gcur) };
-  } else fadeOut(gcur);
-  // 其余的歌词：离当前句越远的越晚一点浮现
-  const [lo, hi] = visibleRange(0);
-  for (let k = lo; k <= hi; k++) {
-    if (jp1 && k === a) continue;
-    elScroll.children[k].animate([{ opacity: 0, translate: '0 14px' }, {}], { duration: 520, delay: 140 + Math.min(Math.abs(k - a), 8) * 45, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'backwards' });
+  fadeIn($('#transport'));
+  const newLine = toScroll ? elScroll.children[a] : cur;
+  const t1 = t0?.[0] && newLine ? measure(newLine) : null;
+  const fly = !!t1?.[0];
+  const flight = (p, q) => `translate(${q.r.left - p.r.left}px, ${q.r.top - p.r.top}px) scale(${q.fs / p.fs})`; // 把 p 那里的字摆到 q 那里
+  const origin = (p) => `${p.r.left - p.box.left}px ${p.r.top - p.box.top}px`; // 以这段字的左上角为准
+  if (toScroll) {
+    const gcur = $('#f-cur', ghost);
+    for (const el of $$('#f-prev, #f-ann, #f-next', ghost)) fadeOut(el);
+    if (fly) {
+      PARTS.forEach((sel, k) => {
+        const g = $(sel, gcur), p = t0[k], q = t1[k];
+        if (!g || !p) return;
+        if (!q) return void fadeOut(g); // 滚动样式里没有这一样：原地淡掉
+        g.animate([{ transformOrigin: origin(p), transform: 'none' }, { transformOrigin: origin(p), transform: flight(p, q) }], { ...opt, fill: 'forwards' });
+      });
+      // 真的那一句先在替身底下淡入（两个叠着，看不出来），替身最后才淡掉
+      gcur.animate([{ opacity: 1 }, { opacity: 1, offset: 0.78 }, { opacity: 0 }], { duration: MORPH.ms, fill: 'forwards' });
+      newLine.animate([{ opacity: 0 }, { opacity: 0, offset: 0.45 }, { opacity: 1, offset: 0.78 }, {}], { duration: MORPH.ms });
+      morphFus = { a, els: $$('.fu', gcur) };
+    } else fadeOut(gcur);
+    // 其余的歌词：离当前句越远的越晚一点浮现
+    const [lo, hi] = visibleRange(0);
+    for (let k = lo; k <= hi; k++) {
+      if (fly && k === a) continue;
+      elScroll.children[k].animate([{ opacity: 0, translate: '0 14px' }, {}], { duration: 520, delay: 140 + Math.min(Math.abs(k - a), 8) * 45, easing: 'cubic-bezier(.2, .8, .2, 1)', fill: 'backwards' });
+    }
+  } else {
+    const gline = $('#scroll', ghost).children[a];
+    if (fly) {
+      PARTS.forEach((sel, k) => {
+        const el = $(sel, cur), p = t0[k], q = t1[k];
+        if (!el || !q) return;
+        if (!p) return void fadeIn(el); // 滚动样式里没有这一样：到了大字里才淡入
+        const g = gline && $(sel, gline);
+        if (g) g.style.visibility = 'hidden'; // 替身里的这一样藏起来：真的正从这里飞走
+        el.animate([{ transformOrigin: origin(q), transform: flight(q, p) }, { transformOrigin: origin(q), transform: 'none' }], opt);
+      });
+    } else fadeIn(cur, 120);
+    fadeOut(ghost.children[1]);
+    for (const id of ['#f-prev', '#f-ann', '#f-next']) fadeIn($(id), 240);
   }
   setTimeout(() => { ghost.remove(); if (morphFus?.els[0] && !morphFus.els[0].isConnected) morphFus = null; }, MORPH.ms + 60);
 }
