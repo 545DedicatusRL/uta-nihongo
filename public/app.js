@@ -2702,6 +2702,21 @@ function morphView(to) {
   // 一个字在哪：量字本身（带注音的量第一个汉字），不量外面的框——框的高矮在两个样式里不一样，字本身才对得上
   const at = (u) => textRect(u.classList.contains('ch') ? u : $('.ch', u) || u);
   const seen = (r) => r.width > 0 || r.height > 0; // 折行处被吃掉的空格量出来是空的
+  // 罗马音、翻译这两行是整段文字，没有按字包起来：直接量文字里每个字在哪（不用改页面）。不是单纯一段文字就返回 null
+  const charRects = (el) => {
+    const node = el?.childNodes.length === 1 && el.firstChild.nodeType === 3 ? el.firstChild : null;
+    if (!node) return null;
+    const rg = document.createRange();
+    return Array.from({ length: node.length }, (_, i) => { rg.setStart(node, i); rg.setEnd(node, i + 1); return rg.getBoundingClientRect(); });
+  };
+  // 把一行文字切成几段，每一段在两个样式里都各自落在同一排上：这样的一段可以整段平移过去，不会变形。
+  // 两个样式折行的地方一样（或者都没折行）时就只有一段
+  const rowsOf = (rs) => { let row = 0, top = null; return rs.map((r) => { if (seen(r)) { if (top !== null && r.top > top + r.height * 0.5) row++; top = r.top; } return row; }); };
+  const splitRuns = (a, b) => {
+    const ra = rowsOf(a), rb = rowsOf(b), out = [];
+    for (let i = 1, from = 0; i <= a.length; i++) if (i === a.length || ra[i] !== ra[from] || rb[i] !== rb[from]) { out.push([from, i]); from = i; }
+    return out;
+  };
   // 这个字所在的词的标注线画在多高：词的框的下沿。不能直接用字的下沿——逐字歌词里唱到的字是抬起来的，线却不跟着抬。
   // 词折成两行时框也分成两段，取字所在的那一段
   const lineY = (u, c) => {
@@ -2715,6 +2730,7 @@ function morphView(to) {
   if (t0?.[0] && !toScroll) { const box = rect($('#lyrics')); if (t0[0].r.bottom < box.top || t0[0].r.top > box.bottom) t0 = null; } // 自己划走了、当前句不在屏幕上：这一句不飞
   const u0 = t0?.[0] ? unitsOf(oldLine).map(at) : [];
   const y0 = t0?.[0] ? unitsOf(oldLine).map((u, k) => lineY(u, u0[k])) : [];
+  const c0 = t0?.[0] ? PARTS.map((sel, k) => (k && t0[k] ? charRects($(sel, oldLine)) : null)) : [];
   // 原来的播放器和歌词各留一份替身，盖在原处（样式靠 id 和外层的 class 对上，所以外层抄一份 #app 的 class）
   $('#morph-ghost')?.remove();
   const ghost = document.createElement('div');
@@ -2771,11 +2787,33 @@ function morphView(to) {
     };
     // 用 translate / scale，不用 transform：逐字歌词里唱到的字靠 transform 抬着，两样叠在一起才和真的那句一模一样
     us.forEach((u, k) => { if (seen(u0[k]) && seen(u1[k]) && seen(rest[k].r)) u.animate(move(rest[k], u0[k], u1[k], t0[0].fs / t1[0].fs), { ...opt, fill: 'both' }); });
+    // 罗马音、翻译：两个样式里折行的地方一样就整行飞；不一样（长句子常这样）就按折行切成几段，各段各飞各的。
+    // 整行飞的话，起步时它已经是新样式的折法，和原来的形状对不上，看上去是先跳了一下再飞
     for (const k of [1, 2]) {
       const el = $(PARTS[k], F), p = t0[k], q = t1[k];
       if (!el || !q) continue;
-      if (p) el.animate(move({ box: rect(el), r: textRect(el) }, p.r, q.r, p.fs / q.fs), { ...opt, fill: 'both' });
-      else fadeIn(el); // 原来的样式里没有这一行：到了新样式才淡入
+      if (!p) { fadeIn(el); continue; } // 原来的样式里没有这一行：到了新样式才淡入
+      const a0 = c0[k], a1 = charRects($(PARTS[k], newLine)), text = el.firstChild?.data;
+      const runs = a0 && a1 && a0.length === a1.length && text?.length === a0.length && el.childNodes.length === 1 ? splitRuns(a0, a1) : [];
+      if (runs.length < 2) { el.animate(move({ box: rect(el), r: textRect(el) }, p.r, q.r, p.fs / q.fs), { ...opt, fill: 'both' }); continue; }
+      el.textContent = '';
+      const spans = runs.map(([from, to]) => {
+        const sp = document.createElement('span');
+        sp.style.cssText = 'display:inline-block;white-space:pre;';
+        sp.textContent = text.slice(from, to);
+        el.append(sp);
+        return sp;
+      });
+      // 每一段认准一个字来对位置：这一段里第一个在两个样式里都量得到的字（段首可能是折行处被吃掉的空格）
+      const rg = document.createRange();
+      const pin = spans.map((sp, n) => {
+        const [from, to] = runs[n];
+        let j = from;
+        while (j < to - 1 && !(seen(a0[j]) && seen(a1[j]))) j++;
+        rg.setStart(sp.firstChild, j - from); rg.setEnd(sp.firstChild, j - from + 1);
+        return { j, box: rect(sp), r: rg.getBoundingClientRect() };
+      });
+      spans.forEach((sp, n) => { const L = pin[n]; if (seen(a0[L.j]) && seen(a1[L.j]) && seen(L.r)) sp.animate(move(L, a0[L.j], a1[L.j], p.fs / q.fs), { ...opt, fill: 'both' }); });
     }
     // 词下面的标注线：跟着字一起飞。线本来是画在整个词上的，而这一份的排版和真的那句会有出入（见上），
     // 照原样画的话线会落在错的地方，落地换成真的那句时再跳一下。所以这一份里词上的线不画，
