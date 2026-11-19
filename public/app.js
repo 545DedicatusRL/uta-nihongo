@@ -1124,10 +1124,10 @@ function setOffset(v) {
 }
 $$('#offset-pop [data-off]').forEach((b) => b.addEventListener('click', () => setOffset(S.offset + Number(b.dataset.off))));
 $('#offset-reset').addEventListener('click', () => setOffset(0));
-$('#offset-tap').addEventListener('change', (e) => { S.tapAlign = e.target.checked; });
+$('#offset-tap').addEventListener('change', (e) => { S.tapAlign = e.target.checked; app.classList.toggle('tap-align', S.tapAlign); });
 // 时间对齐的面板一关（不管怎么关的），敲击对齐就跟着关掉，免得之后点歌词还在改时间
 new MutationObserver(() => {
-  if ($('#offset-pop').hidden && S.tapAlign) { S.tapAlign = false; $('#offset-tap').checked = false; }
+  if ($('#offset-pop').hidden && S.tapAlign) { S.tapAlign = false; $('#offset-tap').checked = false; app.classList.remove('tap-align'); }
 }).observe($('#offset-pop'), { attributes: true, attributeFilter: ['hidden'] });
 
 // ---------------- 辞书模式 ----------------
@@ -2467,12 +2467,16 @@ $('#btn-offset').addEventListener('click', () => {
 $$('[data-close]').forEach((b) => b.addEventListener('click', () => { b.closest('.drawer, .modal').hidden = true; }));
 $$('.modal').forEach((m) => m.addEventListener('mousedown', (e) => { if (e.target === m) m.hidden = true; }));
 document.addEventListener('mousedown', (e) => {
-  // 敲击对齐开着时，点歌词是在对齐，不算「点到面板外面」，面板留着方便多敲几次
-  if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset') && !(S.tapAlign && e.target.closest('#lyrics, #focus, #ktv'))) $('#offset-pop').hidden = true;
+  dismissClick = false; // 这一下是不是只用来收起什么东西（或者根本不该有反应），而不算点了底下的封面：见封面的点击
+  if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset')) {
+    // 时间对齐的面板开着时点到封面：不切换样式。和记词 / 修改模式一个道理，正对着歌词敲，手一滑点到封面不该把样式换了
+    if (e.target.closest('#art-wrap')) dismissClick = true;
+    // 敲击对齐开着时，点歌词是在对齐，不算「点到面板外面」，面板留着方便多敲几次；点到封面也不算，什么都不发生
+    if (!(S.tapAlign && e.target.closest('#lyrics, #focus, #ktv, #art-wrap'))) $('#offset-pop').hidden = true;
+  }
   if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) toggleMenu(false);
   if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) { $('#reading-pop').hidden = true; popClosedAt = performance.now(); }
-  // 这一下是不是用来收起资料库 / 词汇书的：是的话它只管收起，不再算点了底下的封面（见封面的点击）
-  dismissClick = false;
+  // 这一下是用来收起资料库 / 词汇书的：它只管收起
   for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) { $(`#${id}`).hidden = true; dismissClick = true; }
 });
 
