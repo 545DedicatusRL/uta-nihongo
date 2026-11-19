@@ -255,6 +255,9 @@ function setArt(track, cover) {
 //   两种不算「独立」，照旧参与：
 //   - 是词尾、句式的一部分的：走って 的 て、泣いても 的 も、夢じゃない 的 じゃ（tok.f）
 //   - 句末的语气词 よ、ね、な、ぜ、さ、わ、ぞ（tok.fin）：它们拖长是在抒情，不是语法上的填充
+// 四、变形的词（作って、合ってる、忘れてしまう）不能只有词尾冒、词干不动。两处照顾，细节见 holdPlan：
+//   - 促音 っ 并进前一个字，不单独算一个字（它常常只有不到 0.1 秒，会把「带着左边」卡断）
+//   - 一段冒起来的字最左边停在词尾上、词干一个都没冒时，把词干补上（最多补 HOLD_STEM.extra 个字）
 const HOLD_MORA = 0.25; // 平常唱歌一个音大约多长（秒）
 const HOLD_MIN = 0.8;   // 至少拖这么久才算长音
 const HOLD_FULL = 1.9;  // 拖到这么久效果就到顶了
@@ -270,7 +273,9 @@ const HOLD_SPREAD = { max: 3, within: 1.2, fade: 0.08, floor: 0.6, min: 0.11 }; 
 const HOLD_NEXT = 0.3; // 唱完后这么久以内紧接着又有字冒起来：这个字要快点落，给后面的让位
 const HOLD_TAIL = { max: 3, within: 0.8 }; // 往右带几个字、最晚在长音唱完后多久（秒）以内开始唱的
 const HOLD_NO_PARTICLE = true; // 独立的助词不参与（见上面第三条）；改成 false 就回到助词也冒的样子
+const HOLD_STEM = { extra: 2, within: 2 }; // 只有词尾冒时把词干补上（见 holdPlan 里第四条）：最多补几个字、最多隔多久（秒）。extra 改成 0 就不补
 const SMALL_KANA = /[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/;
+const SOKUON = /[っッ]/;
 const moraCount = (s) => { let n = 0; for (const c of s) if (/[ぁ-ゖァ-ヺー〜～]/.test(c) && !SMALL_KANA.test(c)) n++; return n; };
 const syllables = (w) => Math.max(1, (w.toLowerCase().replace(/e$/, '').match(/[aeiouy]+/g) || []).length);
 // 几个汉字连在一起、共用一段注音的（宝物 / たからもの）：能不能按字拆开，每个字各自填色、各自抬起。
@@ -298,25 +303,37 @@ function holdPlan(line) {
   // units：这一句里能冒起来的最小单位，从左到右。cs = 它占的字符下标；g = 属于第几个短语；own = 它自己是不是长音（强度）
   const units = [];
   let g = 0;
-  const push = (cs, m) => {
+  const push = (cs, m, ti) => {
     const a0 = ct[cs[0]], a1 = ct[cs[cs.length - 1]] || a0;
     const t1 = a0 && Math.min(a1[1], a0[0] + HOLD_CAP);
-    if (a0) units.push({ cs, t0: a0[0], t1, g, own: m ? amp(t1 - a0[0], m, HOLD_MORA, HOLD_MIN) : 0, a: 0 });
+    if (a0) units.push({ cs, m, ti, t0: a0[0], t1, g, own: m ? amp(t1 - a0[0], m, HOLD_MORA, HOLD_MIN) : 0, a: 0 });
   };
-  for (const tok of line.tokens) {
+  // 促音（っ）并进前一个字里，不单独算一个字：它本身没有声音，只是前一个音的收尾，
+  // 歌词的时间里常常只分给它不到 0.1 秒（前一个字也跟着被切短）。单独算的话它过不了「被带的字至少唱多久」那一关，
+  // 鼓包往左走到它就断了——「合ってるよ」只有 てる 冒、合っ 不动，「作って」只有 て 冒
+  const glue = (c, ti) => {
+    const u = units[units.length - 1], tm = ct[c];
+    if (!u || u.ti !== ti || !tm) return false;
+    u.cs.push(c);
+    u.t1 = Math.min(tm[1], u.t0 + HOLD_CAP);
+    // 算不算长音还是各看各的，不把两段时间加起来：促音那一段多半是停顿，加进去的话「なぞった」这种普通的词也成了长音
+    u.own = Math.max(u.own, amp(Math.min(tm[1] - tm[0], HOLD_CAP), 1, HOLD_MORA, HOLD_MIN));
+    return true;
+  };
+  line.tokens.forEach((tok, ti) => {
     const latin = /^[A-Za-z'’]+$/.test(tok.s);
     const word = /[぀-ヿ㐀-鿿々〆A-Za-z0-9]/.test(tok.s); // 有字，不是空格和标点
     const lone = tok.s.length === 1 && /[ぁ-ヿ]/.test(tok.s); // 孤零零一个假名被分成了「实词」（云フ 的 フ）：多半是前一个词的词尾，不另起短语
     if (!word || latin || (tok.v && !tok.j && !lone)) g++; // 实词开头是新的短语；空格、标点、英文单词把短语断开
-    if (!word) continue;
-    if (HOLD_NO_PARTICLE && tok.pos === '助' && !tok.f && !tok.fin) { g++; continue; } // 独立的助词：不冒，并且把短语断开
+    if (!word) return;
+    if (HOLD_NO_PARTICLE && tok.pos === '助' && !tok.f && !tok.fin) { g++; return; } // 独立的助词：不冒，并且把短语断开
     if (latin) {
       // 英文单词：字母本来就是一个接一个冒、到词尾一起落，不参与上面的「带着左边」
       const a0 = ct[tok.i0], a1 = ct[tok.i0 + tok.s.length - 1];
       const a = a0 && a1 ? amp(a1[1] - a0[0], syllables(tok.s), HOLD_MORA * HOLD_LATIN, HOLD_MIN * HOLD_LATIN) : 0;
       if (a) for (let c = tok.i0; c < tok.i0 + tok.s.length; c++) if (ct[c]) plan.set(c, { a, t0: ct[c][0], t1: Math.min(a1[1], ct[c][0] + HOLD_MAX) });
       g++;
-      continue;
+      return;
     }
     let ci = tok.i0;
     for (const seg of tok.segs) {
@@ -324,18 +341,19 @@ function holdPlan(line) {
       ci += len;
       if (KANJI.test(seg.t) && seg.r) {
         const parts = kanjiParts(line, seg, c0);
-        if (parts) for (const p of parts) push(Array.from({ length: p.ch.length }, (_, k) => p.c + k), moraCount(p.r) || 2);
-        else push(Array.from({ length: len }, (_, k) => c0 + k), moraCount(seg.r) || len * 2);
+        if (parts) for (const p of parts) push(Array.from({ length: p.ch.length }, (_, k) => p.c + k), moraCount(p.r) || 2, ti);
+        else push(Array.from({ length: len }, (_, k) => c0 + k), moraCount(seg.r) || len * 2, ti);
         continue;
       }
       for (let k = 0; k < len;) {
+        if (SOKUON.test(seg.t[k]) && glue(c0 + k, ti)) { k++; continue; }
         let e = k + 1;
         while (e < len && SMALL_KANA.test(seg.t[e])) e++;
-        push(Array.from({ length: e - k }, (_, j) => c0 + k + j), KANJI.test(seg.t[k]) ? 2 : moraCount(seg.t[k]));
+        push(Array.from({ length: e - k }, (_, j) => c0 + k + j), KANJI.test(seg.t[k]) ? 2 : moraCount(seg.t[k]), ti);
         k = e;
       }
     }
-  }
+  });
   const near = (T, n) => T.own * Math.max(HOLD_SPREAD.floor, 1 - HOLD_SPREAD.fade * n);
   units.forEach((T, i) => {
     if (!T.own) return;
@@ -344,6 +362,26 @@ function holdPlan(line) {
     for (let j = i + 1; j < units.length && j - i <= HOLD_TAIL.max && ok(units[j]) && units[j].t0 - T.t1 <= HOLD_TAIL.within; j++) units[j].a = Math.max(units[j].a, near(T, j - i));
     for (let j = i - 1; j >= 0 && i - j <= HOLD_SPREAD.max && ok(units[j]) && T.t0 - units[j].t0 <= HOLD_SPREAD.within; j--) units[j].a = Math.max(units[j].a, near(T, i - j));
   });
+  // 四、变形的词不能只有词尾冒。鼓包往左只带三个字，常常带到一个变形的词中间就停了：
+  //   「捨ててしまえ」拖的是 え，带到 てしま 为止——冒的是 てしまえ，词干 捨て 却不动，看着像是冒错了地方。
+  //   所以一段冒起来的字，如果最左边停在某个词的词尾上、这个词的词干一个字都没冒，就接着往左把这个词补全。
+  //   补的字不受「三个字」「至少唱多久」那两条限制（词干再短也是这个词的主体），但有两个上限：
+  //   最多补 HOLD_STEM.extra 个字（再多说明这个词太长，整个带上就又成了「带得太多」）、离这一段开头不超过 HOLD_STEM.within 秒。
+  //   补不全的就一个都不补，维持原样。
+  if (HOLD_STEM.extra) {
+    const stemOf = (ti) => { while (ti > 0 && line.tokens[ti].j) ti--; return ti; }; // 这个词尾接在哪个词干后面
+    for (let i = 0; i < units.length; i++) {
+      const L = units[i];
+      if (!L.a || units[i - 1]?.a || !line.tokens[L.ti].j) continue; // 只看每一段的最左边，而且它得是词尾
+      const st = stemOf(L.ti);
+      let k = i - 1;
+      while (k >= 0 && units[k].g === L.g && units[k].ti >= st && !units[k].a) k--;
+      const first = k + 1; // 这个词从哪个字开始（往左数到词干的第一个字，或者碰到已经在冒的字）
+      if (first >= i || units[first].ti !== st || (k >= 0 && units[k].ti === st)) continue; // 没碰到词干，或者词干已经有一部分在冒
+      if (i - first > HOLD_STEM.extra || L.t0 - units[first].t0 > HOLD_STEM.within) continue;
+      for (let j = i - 1; j >= first; j--) units[j].a = L.a * Math.max(HOLD_SPREAD.floor, 1 - HOLD_SPREAD.fade * (i - j));
+    }
+  }
   units.forEach((u, i) => {
     if (!u.a) return;
     const nx = units[i + 1];
