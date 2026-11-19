@@ -273,7 +273,7 @@ const HOLD_SPREAD = { max: 3, within: 1.2, fade: 0.08, floor: 0.6, min: 0.11 }; 
 const HOLD_NEXT = 0.3; // 唱完后这么久以内紧接着又有字冒起来：这个字要快点落，给后面的让位
 const HOLD_TAIL = { max: 3, within: 0.8 }; // 往右带几个字、最晚在长音唱完后多久（秒）以内开始唱的
 const HOLD_NO_PARTICLE = true; // 独立的助词不参与（见上面第三条）；改成 false 就回到助词也冒的样子
-const HOLD_STEM = { extra: 2, within: 2 }; // 只有词尾冒时把词干补上（见 holdPlan 里第四条）：最多补几个字、最多隔多久（秒）。extra 改成 0 就不补
+const HOLD_STEM = { extra: 3, within: 2 }; // 只有词尾冒时把词干补上（见 holdPlan 里第四条）：最多补几个字、最多隔多久（秒）。extra 改成 0 就不补
 const SMALL_KANA = /[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/;
 const SOKUON = /[っッ]/;
 const moraCount = (s) => { let n = 0; for (const c of s) if (/[ぁ-ゖァ-ヺー〜～]/.test(c) && !SMALL_KANA.test(c)) n++; return n; };
