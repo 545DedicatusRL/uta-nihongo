@@ -121,6 +121,8 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
    飞着的封面起步时正好在鼠标底下，会被当成「悬停着」而放大，飞走以后又缩回去。所以飞的时候不认悬停，等鼠标真的动了再认 */
 .view-focus #art-wrap.go:not(.nohover):hover { scale: 1.08; }
 .view-apple #art-wrap.go { cursor: pointer; }
+/* 记词 / 修改模式下点封面不切换（见 app.js），所以也不显示成能点的样子 */
+#app.dict-mode #art-wrap.go, #app.edit-mode #art-wrap.go { cursor: default; scale: none; }
 #morph-ghost { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
 #morph-ghost > * { position: fixed; margin: 0; }
 #morph-ghost #art-wrap, #morph-ghost #meta { visibility: hidden; }

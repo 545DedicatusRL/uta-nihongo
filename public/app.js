@@ -2736,7 +2736,8 @@ let morphHover = null; // 封面飞完以后等鼠标动一下、好恢复悬停
 const flatView = (v) => v === 'apple' || v === 'focus';
 $('#art-wrap').classList.toggle('go', FX_MORPH);
 // 资料库 / 词汇书开着的时候点到封面：那一下只是把抽屉收起来（mousedown 时已经收了），不切换样式
-$('#art-wrap').addEventListener('click', () => { if (FX_MORPH && !dismissClick && flatView(prefs.view)) morphView(prefs.view === 'focus' ? 'apple' : 'focus'); });
+// 记词 / 修改模式下点封面没有反应：这时是在歌词上点来点去，手一滑点到封面就把样式换了很烦人（顶栏的按钮和快捷键照常能切）
+$('#art-wrap').addEventListener('click', () => { if (FX_MORPH && !dismissClick && !S.mode && flatView(prefs.view)) morphView(prefs.view === 'focus' ? 'apple' : 'focus'); });
 function morphView(to) {
   const from = prefs.view;
   if (from === to) return;
