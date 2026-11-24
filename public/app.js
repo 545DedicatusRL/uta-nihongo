@@ -274,9 +274,13 @@ function rgbToHsl(r, g, b) {
   const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [h / 6, s, l];
 }
+// 流动背景的总开关。false：那五团色块整个不显示（连它们一直在跑的动画一起停掉），
+// 背景回到原来的样子（模糊的封面）；想再打开改回 true 就行
+const FX_MESH = false;
+$('#bg-mesh').hidden = !FX_MESH;
 let meshUrl = '';
 async function paintMesh(url) {
-  if (url === meshUrl) return;
+  if (!FX_MESH || url === meshUrl) return;
   meshUrl = url;
   const mesh = $('#bg-mesh');
   let pal;
