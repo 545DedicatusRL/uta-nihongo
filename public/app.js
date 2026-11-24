@@ -22,7 +22,9 @@ const api = {
     return j;
   },
 };
-const control = (cmd, a, b) => api.post('/api/control', { cmd, a, b }).catch((e) => toast(`Apple Music 没有响应：${e.message}`));
+// 当前用的播放器（启动时从 /api/info 取）：Apple Music 或网易云音乐。网易云模式下没有资料库和程序自己的播放队列
+const PLAYER = { id: 'apple', name: 'Apple Music', caps: { library: true, queue: true } };
+const control = (cmd, a, b) => api.post('/api/control', { cmd, a, b }).catch((e) => toast(`${PLAYER.name} 没有响应：${e.message}`));
 
 // ---------------- 偏好（存在浏览器里） ----------------
 const DEFAULT_PREFS = {
@@ -91,6 +93,7 @@ function onState(s) {
 }
 
 function showIdle(s) {
+  if (PLAYER.id === 'netease') return showIdleNetease(s);
   if (s.waiting) setStatus('正在等待 Apple Music 响应…<br>如果系统弹出了「想要控制 Music」的提示，请点「允许」。<br><span class="muted">也可能是 Music 里有未关闭的对话框。</span>');
   else if (!s.running) setStatus('Apple Music 还没有打开。<br>打开它播放一首歌，或者从左上角的「资料库」里选一首。');
   // 第一次的授权询问被点了「不允许」：系统不会再问第二次，要到系统设置里手动打开。打开后这里会自己恢复，不用重启
@@ -98,6 +101,13 @@ function showIdle(s) {
     setStatus('还没有允许本程序控制 Apple Music。<br>打开「系统设置 → 隐私与安全性 → 自动化」，找到「唱歌学日语」（从终端启动的话是「终端」），把它下面的「音乐」开关打开。<br><span class="muted">开关打开后这里会自动恢复，不用重启。</span><br><button class="btn" id="btn-privacy">打开系统设置</button>');
   }
   else setStatus('在 Apple Music 里播放一首歌，或者从左上角的「资料库」里选一首。');
+}
+function showIdleNetease(s) {
+  if (s.errno === 'node') setStatus(`${esc(s.err)}。<br><span class="muted">网易云模式要用到 Node.js 自带的 WebSocket，请升级 Node.js 后重启程序。</span>`);
+  // 网易云已经开着，但不是带调试端口启动的：连不上它，要重开一次
+  else if (s.errno === 'netease-no-port') setStatus('网易云音乐已经打开了，但要由唱歌学日语重新打开一次才能读取播放进度。<br><span class="muted">会先关掉网易云再自动打开，正在放的歌会停一下。</span><br><button class="btn" id="btn-ne-relaunch">重新打开网易云</button>');
+  else if (s.waiting || !s.running) setStatus('正在打开 / 连接网易云音乐…');
+  else setStatus('在网易云音乐里播放一首歌。');
 }
 function clearSong(s) {
   S.track = null; S.song = null; S.lines = []; S.active = -2;
@@ -113,6 +123,7 @@ function clearSong(s) {
 let statusHTML = null;
 const setStatus = (html) => { if (html === statusHTML) return; statusHTML = html; $('#status').innerHTML = html || ''; };
 $('#status').addEventListener('click', (e) => {
+  if (e.target.closest('#btn-ne-relaunch')) { setStatus('正在重新打开网易云音乐…'); control('relaunch'); }
   if (e.target.closest('#btn-privacy')) api.post('/api/open-privacy', {}).catch(() => toast('打不开系统设置，请手动打开：系统设置 → 隐私与安全性 → 自动化'));
 });
 
@@ -1764,6 +1775,7 @@ function applyJa() {
 }
 
 async function openLibrary() {
+  if (!PLAYER.caps.library) return toast(`${PLAYER.name}模式下没有资料库，请在${PLAYER.name}里选歌`);
   $('#library').hidden = false;
   $('#lib-search').focus();
   // 再次打开：回到上次划到的位置（抽屉收起时浏览器不会替我们记着滚动位置，所以自己记在 lib.top 里）
@@ -2292,6 +2304,8 @@ async function openSettings() {
     $('#set-browser').innerHTML = `<option value="auto">${esc(auto)}</option>` + s.browsers.map((b) => `<option value="${esc(b)}">${esc(b)}</option>`).join('') + '<option value="default">系统默认浏览器（普通标签页）</option>';
     $('#set-browser').value = s.browser;
     $('#set-browser-apply').hidden = true;
+    $('#set-player').value = s.player;
+    $('#set-player-apply').hidden = s.player === s.playerInUse;
   } catch { /* 忽略 */ }
 }
 function onAnnPrefChange() {
@@ -2367,6 +2381,13 @@ $('#set-browser').addEventListener('change', async (e) => {
   $('#set-browser-apply').hidden = false;
   toast('已保存，下次打开界面时生效');
 });
+// 播放器：Apple Music / 网易云音乐。换了要重启程序才生效（界面会自动刷新）
+$('#set-player').addEventListener('change', async (e) => {
+  try { await api.post('/api/settings', { player: e.target.value }); } catch (err) { return toast(`保存失败：${err.message}`); }
+  $('#set-player-apply').hidden = e.target.value === PLAYER.id;
+  if (e.target.value !== PLAYER.id) toast('已保存，点「现在重启」后生效');
+});
+$('#set-player-apply').addEventListener('click', () => { api.post('/api/restart', {}).catch(() => {}); toast('正在重启…'); });
 $('#set-browser-apply').addEventListener('click', async () => {
   try { await api.post('/api/show', { fresh: true }); } catch (err) { return toast(`打开失败：${err.message}`); }
   $('#set-browser-apply').hidden = true; // 新窗口出来后，服务端会通知原来的界面窗口自己关掉
@@ -2961,7 +2982,22 @@ $('#set-guide').addEventListener('click', showGuide);
 // ---------------- 启动 ----------------
 applyPrefs();
 updateOffsetLabel();
-setStatus('正在连接 Apple Music…');
+setStatus('正在连接播放器…');
+// 播放器是哪个：改掉界面上写着 Apple Music 的地方；网易云模式下藏起资料库、随机播放和播放列表
+api.get('/api/info').then((i) => {
+  if (!i.player) return;
+  Object.assign(PLAYER, { id: i.player, name: i.playerName, caps: i.caps });
+  // 在 macOS App 里运行：界面就是 App 自己的窗口，「用哪个浏览器打开」的设置用不上
+  if (i.app) {
+    const row = $('#set-browser').closest('.form-row');
+    row.hidden = true;
+    if (row.nextElementSibling?.matches('p.muted')) row.nextElementSibling.hidden = true;
+  }
+  if (!S.track && !S.player) setStatus(`正在连接 ${PLAYER.name}…`);
+  $('#btn-library').title = `${PLAYER.name} 资料库`;
+  for (const sel of ['#btn-library', '#btn-shuffle', '#btn-queue']) $(sel).hidden = sel === '#btn-library' ? !PLAYER.caps.library : !PLAYER.caps.queue;
+  if (S.player) onState(S.player);
+}).catch(() => {});
 // 程序退出了（在设置里点了退出，或从程序坞退出）：盖上提示，不再重连
 function showBye() {
   es.close();
