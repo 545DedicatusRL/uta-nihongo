@@ -182,11 +182,12 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
    阴影是画在这一行自己的内容里的，不另开图层，也就没有那条线（mac-app 这个 class 由 App 外壳加在 <html> 上） */
 .mac-app .line { filter: none; --bl: calc(.8px + min(var(--d, 0), 5) * 1.5px);
   transition: opacity .6s ease, color .45s ease, text-shadow .6s ease, transform var(--spring-ms, .65s) var(--spring, cubic-bezier(.2, .9, .25, 1)), background .2s; }
-.mac-app #app:not(.dict-mode):not(.edit-mode) #scroll:not(.free) .line:not(.active):not(.co):not(.gap) { color: rgba(255, 255, 255, .01); text-shadow: 0 0 var(--bl) var(--fg-2), 0 0 var(--bl) var(--fg-3); }
+.mac-app :is(#app, #morph-ghost):not(.dict-mode):not(.edit-mode) #scroll:not(.free) .line:not(.active):not(.co):not(.gap) { color: rgba(255, 255, 255, .01); text-shadow: 0 0 var(--bl) var(--fg-2), 0 0 var(--bl) var(--fg-3); }
 /* 字的颜色不能是全透明：WebKit 遇到全透明的字连阴影一起不画，所以留 1% */
+/* 换样式的动画里，原来那页歌词会抄一份（#morph-ghost）盖在原处慢慢淡出：那一份也得是虚的，不然清楚的旧歌词和大字叠在一起 */
 /* 虚化的行日文用 Hiragino 本身：「Uta JP」（只管日文字、英文交给 SF 的那个本地字体，见文件开头）在 WebKit 里画不出文字阴影，
    这几行就几乎看不见了。代价是这几行里的英文字母用的是 Hiragino 的样子，唱到这一句、变清楚时换回 SF */
-.mac-app #app:not(.dict-mode):not(.edit-mode) #scroll:not(.free) .line:not(.active):not(.co):not(.gap) .jp { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif; }
+.mac-app :is(#app, #morph-ghost):not(.dict-mode):not(.edit-mode) #scroll:not(.free) .line:not(.active):not(.co):not(.gap) .jp { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif; }
 .mac-app #scroll .line .ann { color: var(--fg); text-shadow: none; } /* 标注卡片不虚化 */
 .line.active .ann { animation: ann-in .5s .12s cubic-bezier(.2, .8, .2, 1) backwards; }
 @keyframes ann-in { from { opacity: 0; transform: translateY(6px); } }
