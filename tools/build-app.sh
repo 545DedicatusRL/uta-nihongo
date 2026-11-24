@@ -20,7 +20,15 @@ echo "· 依赖"
 echo "· 编译外壳"
 rm -rf "$ROOT/dist/.stage"
 mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources/app"
-swiftc -O -o "$STAGE/Contents/MacOS/$NAME" macos/main.swift -framework AppKit -framework WebKit
+# 用新系统的 SDK 编译，窗口才是新系统的样子（红黄绿按钮更大、窗口圆角更大）；用旧 SDK 编出来的会被系统按旧样式显示。
+# 当前选中的开发工具 SDK 比较旧、又装了 Xcode 时，改用 Xcode 自带的
+if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then
+  SDK_MAJOR="$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)"
+  [ "${SDK_MAJOR:-0}" -ge 26 ] || export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
+echo "  SDK $(xcrun --show-sdk-version 2>/dev/null)"
+# -target：最低支持 macOS 12（和 Info.plist 里写的一致），不然默认只能在本机这个系统版本以上运行
+xcrun swiftc -O -target "$(uname -m)-apple-macos12.0" -o "$STAGE/Contents/MacOS/$NAME" macos/main.swift -framework AppKit -framework WebKit
 
 echo "· 复制程序与 Node.js（$("$NODE" -v)）"
 cp "$NODE" "$STAGE/Contents/Resources/node"

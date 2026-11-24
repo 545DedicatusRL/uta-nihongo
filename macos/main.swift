@@ -149,6 +149,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     window.titleVisibility = .hidden
     window.backgroundColor = NSColor(red: 0.114, green: 0.102, blue: 0.149, alpha: 1) // 和界面的底色一样
     window.minSize = NSSize(width: 640, height: 480)
+    // 一条空的工具栏：标题栏因此变高，红黄绿按钮按系统「带工具栏的窗口」的样子摆（更靠里、竖直居中），
+    // 正好和界面顶部栏的按钮排成一行。按钮实际在哪由 syncLights 量出来告诉网页
+    window.toolbar = NSToolbar(identifier: "main")
+    window.toolbarStyle = .unified
+    window.titlebarSeparatorStyle = .none
     window.contentView = web
     window.center()
     window.setFrameAutosaveName("main")
@@ -160,9 +165,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       正在启动…</body></html>
       """, baseURL: nil)
 
+    // 全屏单独处理：没有红黄绿按钮，界面照浏览器里的样子铺满（「资料库」回到左上角）。
+    // 那条空工具栏也要收起来，不然它会留在屏幕顶上变成一条深色的带子，盖住界面的顶部栏。
+    // 退出时：一开始就让顶部栏先让出位置（免得按钮回来时压在「资料库」上），窗口落定后放回工具栏、重新量位置
+    let nc = NotificationCenter.default
+    nc.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+      self?.isFull = true
+      self?.window.toolbar?.isVisible = false
+      self?.syncLights()
+    }
+    nc.addObserver(forName: NSWindow.willExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+      self?.isFull = false
+      self?.syncLights(measure: false)
+    }
+    nc.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+      self?.isFull = false
+      self?.window.toolbar?.isVisible = true
+      self?.window.layoutIfNeeded()
+      self?.syncLights()
+    }
     server.onExit = { NSApp.terminate(nil) }
     Task { await boot() }
   }
+
+  // 把红黄绿按钮的位置告诉网页（--tl-end：最右一个的右边缘；--tl-cy：竖直中线，都从窗口左上角量），
+  // 顶部栏据此排在它们右边、同一条中线上。全屏时去掉 mac-app 标记。
+  // 是否全屏自己记（isFull），不看窗口当时的状态：进出全屏的动画过程中窗口的状态还没变过来
+  var isFull = false
+  func syncLights(measure: Bool = true) {
+    var js = "document.documentElement.classList.toggle('mac-app', \(!isFull));"
+    if measure, !isFull, let b = window.standardWindowButton(.zoomButton) {
+      let r = b.convert(b.bounds, to: nil)
+      let set = { (k: String, v: CGFloat) in "document.documentElement.style.setProperty('\(k)', '\(String(format: "%.1f", v))px');" }
+      js += set("--tl-end", r.maxX) + set("--tl-cy", window.frame.height - r.midY)
+    }
+    web.evaluateJavaScript(js, completionHandler: nil)
+  }
+  func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { syncLights() }
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { syncLights() }
 
   // 端口上已经有一份在跑（比如以前从终端启动的）：不是这个 App 里的就让它退出，换成自己的
   func boot() async {
