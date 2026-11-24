@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="bg"><div id="bg-img"></div></div>
+<div id="bg"><div id="bg-img"></div><div id="bg-mesh" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div>
 
 <div id="app" class="view-apple">
   <header id="topbar">
@@ -262,8 +262,8 @@
       <div class="marks set-lib" id="set-marks" hidden></div>
 
       <h3>程序</h3>
-      <div class="form-row"><span>播放器</span><select id="set-player"><option value="apple">Apple Music</option><option value="netease">网易云音乐</option></select><button class="btn small" id="set-player-apply" hidden>现在重启</button></div>
-      <p class="muted">网易云音乐模式：在网易云里选歌，这里显示歌词；没有资料库和播放列表。第一次切换时，程序会重新打开一次网易云（带上读取进度用的调试端口）。</p>
+      <div class="form-row"><span>播放器</span><select id="set-player"><option value="auto">自动（哪个在播跟哪个）</option><option value="apple">只用 Apple Music</option><option value="netease">只用网易云音乐</option></select><button class="btn small" id="set-player-apply" hidden>现在重启</button></div>
+      <p class="muted">自动：Apple Music 和网易云音乐哪个在播就显示哪个的歌词。网易云要由本程序打开（带上读取进度用的调试端口）才能被读到；「只用网易云」模式下程序会替你打开它。</p>
       <div class="form-row"><span>界面窗口</span><select id="set-browser"></select><button class="btn small" id="set-browser-apply" hidden>现在就换</button></div>
       <p class="muted">Chrome、Edge 这类浏览器能把界面开成独立窗口（没有地址栏和标签页）；系统默认浏览器只能当普通标签页打开。</p>
       <div class="form-row"><span>缓存</span><button class="btn" id="set-cache">清除缓存</button><span class="muted" id="set-cache-info"></span></div>

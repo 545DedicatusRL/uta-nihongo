@@ -17,7 +17,7 @@
 打开「终端」输入：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/545DedicatusRL/uta-nihongo/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/raaaaaaayx/uta-nihongo/main/install.sh | bash
 ```
 
 程序会被装到 `~/Applications/唱歌学日语`，桌面会生成「唱歌学日语」图标。第一次启动时系统会问是否允许它控制「音乐」，点 **允许**。
@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/545DedicatusRL/uta-nihongo/main/ins
 
 安装到其他位置 `UTA_DIR=`，例如 `curl -fsSL …/install.sh | UTA_DIR=~/uta bash`。
 
-使用git：`git clone https://github.com/545DedicatusRL/uta-nihongo.git`，然后双击 `唱歌学日语.command`。
+使用git：`git clone https://github.com/raaaaaaayx/uta-nihongo.git`，然后双击 `唱歌学日语.command`。
 
 ## 启动
 
@@ -72,7 +72,7 @@ tools/build-app.sh --install
 
 ## 网易云音乐
 
-「设置 → 更多设置 → 程序 → 播放器」选「网易云音乐」后重启。程序会带着调试端口（默认 9222，可用 `UTA_NETEASE_PORT` 改）打开网易云，从它的界面读取当前歌曲和进度，歌词按网易云的歌曲 ID 直接取。这个模式下没有资料库和播放列表，在网易云里选歌即可。
+默认是「自动」：Apple Music 和网易云音乐哪个在播就显示哪个的歌词（「设置 → 更多设置 → 程序 → 播放器」里也可以只用其中一个）。网易云要由本程序打开才能被读到：选「只用网易云」时程序会替你打开它，自动模式下如果网易云不是由本程序打开的，界面上会出现「重新打开网易云」的按钮。网易云带着调试端口（默认 9222，可用 `UTA_NETEASE_PORT` 改）打开后，从它的界面读取当前歌曲和进度，歌词按网易云的歌曲 ID 直接取。只用网易云时没有资料库和播放列表，在网易云里选歌即可。
 
 ## 更新
 

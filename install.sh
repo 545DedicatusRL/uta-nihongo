@@ -1,7 +1,7 @@
 #!/bin/bash
 # 唱歌学日语 — 一键安装 / 更新（macOS）
 #
-#   curl -fsSL https://raw.githubusercontent.com/545DedicatusRL/uta-nihongo/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/raaaaaaayx/uta-nihongo/main/install.sh | bash
 #
 # 第一次运行是安装；以后再运行同一行就是更新：只换程序文件，data/ 里的词汇书、设置和缓存不动。
 # 可选的环境变量：
@@ -9,7 +9,7 @@
 #   UTA_NO_LAUNCH=1        只安装，不启动
 set -euo pipefail
 
-REPO="545DedicatusRL/uta-nihongo"
+REPO="raaaaaaayx/uta-nihongo"
 NAME="唱歌学日语"
 PORT=3939
 

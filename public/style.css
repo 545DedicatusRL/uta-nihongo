@@ -140,6 +140,10 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 #scroll { position: absolute; inset: 0; overflow-y: auto; scrollbar-width: none; padding: 34vh 7% 50vh 3%;
   -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 82%, transparent); mask-image: linear-gradient(transparent, #000 14%, #000 82%, transparent); }
 #scroll::-webkit-scrollbar { display: none; }
+/* 不要浏览器自带的滚动锚定：换行的位移由 glide 用 translate 动画补，WebKit 算锚点时把 translate 也算进去，
+   会边播动画边把滚动位置往回拉，歌词像是被移动了两遍（Chromium 不算 translate，所以只在 App 里出现）。
+   要保持位置的地方 app.js 自己会处理 */
+#scroll { overflow-anchor: none; }
 /* 换行时的位移由 JS 用弹簧动画补（见 app.js 的 glide）；这里只管虚化、明暗和当前行那一点点放大 */
 .line { padding: 13px 14px; margin: 0 -14px; border-radius: 12px; cursor: pointer; color: var(--fg-3);
   transform-origin: left center; transform: scale(.985);
@@ -1036,3 +1040,34 @@ input[type=checkbox]:checked::before { background: #2a2635; box-shadow: 0 2px 5p
 @media (prefers-reduced-motion: reduce) {
   .drawer, .drawer .drawer-body > *, .modal, .modal-card, #menu, #dictbar, .db-form { animation: none !important; }
 }
+
+/* ---------- 暂停时封面缩小（和 Apple Music 一样）：暂停往里缩一圈；继续播放时弹回来 ----------
+   用 transform（不是 scale 属性），阴影不单独变（缩小时跟着一起变小），并让封面单独占一个图层：
+   这样动画交给显卡，歌词逐字填色这些主线程上的活忙的时候也不会一顿一顿的 */
+.view-apple #art-wrap { will-change: transform; transform: translateZ(0) scale(1); transition: transform .7s cubic-bezier(.34, 1.3, .5, 1); }
+#app.view-apple:not(.playing) #art-wrap { transform: translateZ(0) scale(.82); transition: transform .55s cubic-bezier(.3, .7, .3, 1); }
+@media (prefers-reduced-motion: reduce) { .view-apple #art-wrap { transition: none; } }
+
+/* ---------- 背景：封面颜色的色块缓慢流动（Apple Music 歌词页那样） ----------
+   五团柔和的圆形渐变（颜色、大小由 app.js 的 paintMesh 按封面取色给），各自以不同的速度漂移、旋转、伸缩。
+   只动 transform（交给显卡），不用模糊滤镜；换歌时颜色（注册过的 --mc）和大小慢慢过渡 */
+@property --mc { syntax: '<color>'; inherits: false; initial-value: rgba(0, 0, 0, 0); }
+#bg-mesh { position: absolute; inset: 0; overflow: hidden; background: var(--base, transparent); opacity: 0; transition: opacity 1.4s ease, background-color 1.6s ease; }
+#bg-mesh.on { opacity: 1; }
+#bg.meshed #bg-img { opacity: .18; } /* 有色块时，模糊的封面只留一点点纹理 */
+#bg-mesh i { position: absolute; width: var(--s, 70vmax); height: var(--s, 70vmax); border-radius: 50%;
+  background: radial-gradient(closest-side, var(--mc) 0%, color-mix(in srgb, var(--mc) 55%, transparent) 45%, transparent 100%);
+  transition: --mc 1.6s ease, width 2.2s ease, height 2.2s ease; will-change: transform; }
+#bg-mesh i:nth-child(1) { left: -18%; top: -24%; animation: mesh-1 34s ease-in-out infinite alternate; }
+#bg-mesh i:nth-child(2) { right: -22%; top: -10%; animation: mesh-2 41s ease-in-out infinite alternate; }
+#bg-mesh i:nth-child(3) { left: 8%; bottom: -34%; animation: mesh-3 29s ease-in-out infinite alternate; }
+#bg-mesh i:nth-child(4) { right: -8%; bottom: -26%; animation: mesh-4 37s ease-in-out infinite alternate; }
+#bg-mesh i:nth-child(5) { left: 30%; top: 18%; animation: mesh-5 23s ease-in-out infinite alternate; }
+@keyframes mesh-1 { 0% { transform: translate(0, 0) rotate(0) scale(1); } 50% { transform: translate(22vw, 14vh) rotate(60deg) scale(1.15); } 100% { transform: translate(8vw, 30vh) rotate(140deg) scale(.92); } }
+@keyframes mesh-2 { 0% { transform: translate(0, 0) rotate(0) scale(1.05); } 50% { transform: translate(-26vw, 22vh) rotate(-80deg) scale(.9); } 100% { transform: translate(-10vw, 40vh) rotate(-150deg) scale(1.12); } }
+@keyframes mesh-3 { 0% { transform: translate(0, 0) rotate(0) scale(.95); } 50% { transform: translate(30vw, -20vh) rotate(90deg) scale(1.1); } 100% { transform: translate(12vw, -36vh) rotate(170deg) scale(1); } }
+@keyframes mesh-4 { 0% { transform: translate(0, 0) rotate(0) scale(1); } 50% { transform: translate(-30vw, -16vh) rotate(-70deg) scale(1.18); } 100% { transform: translate(-42vw, 6vh) rotate(-130deg) scale(.9); } }
+@keyframes mesh-5 { 0% { transform: translate(0, 0) scale(.8); } 50% { transform: translate(-18vw, 20vh) scale(1.05); } 100% { transform: translate(16vw, -10vh) scale(.88); } }
+/* 整体压暗一点，上面的白字才看得清；边角再暗一些 */
+#bg-mesh::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 100% at 40% 35%, rgba(10, 8, 18, .18), rgba(10, 8, 18, .5)); }
+@media (prefers-reduced-motion: reduce) { #bg-mesh i { animation: none; } }
