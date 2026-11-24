@@ -24,6 +24,7 @@ const api = {
 };
 // 当前用的播放器（启动时从 /api/info 取）：Apple Music 或网易云音乐。网易云模式下没有资料库和程序自己的播放队列
 const PLAYER = { id: 'apple', name: 'Apple Music', caps: { library: true, queue: true } };
+const SRC_NAME = { apple: 'Apple Music', netease: '网易云音乐' };
 const control = (cmd, a, b) => api.post('/api/control', { cmd, a, b }).catch((e) => toast(`${PLAYER.name} 没有响应：${e.message}`));
 
 // ---------------- 偏好（存在浏览器里） ----------------
@@ -75,7 +76,8 @@ function onState(s) {
   if (s.close) return window.close(); // 界面换到别的浏览器重新打开了：这个窗口自己关掉
   if ('queue' in s) onQueue(s.queue);
   // 自动模式：现在跟着的是哪个播放器（提示文字里用它的名字）
-  if (s.source && PLAYER.id === 'auto') PLAYER.name = s.source === 'netease' ? '网易云音乐' : 'Apple Music';
+  if (s.source && PLAYER.id === 'auto') PLAYER.name = SRC_NAME[s.source];
+  onOffer(s.offer, s.source);
   S.player = s;
   const playing = s.state === 'playing';
   app.classList.toggle('playing', playing);
@@ -1168,6 +1170,7 @@ document.addEventListener('mouseover', (e) => {
 // ---------------- 点击歌词：跳转 / 敲击对齐 / 辞书选择 / 改读音 ----------------
 let popClosedAt = -1e9; // 上一次因为点到外面而关掉读音小窗的时刻
 let dismissClick = false; // 刚按下的这一下鼠标把资料库 / 词汇书收起来了
+let dismissSeek = false; // 刚按下的这一下把资料库 / 词汇书 / 菜单 / 时间对齐的面板收起来了：它只管收起，不算点了底下的歌词
 function seekTo(sec) {
   sec = Math.max(0, sec);
   S.jumped = true; // 自己跳的：哪怕只跳了一点点（点了紧挨着的下一句），也不算「唱过来的」
@@ -1183,6 +1186,7 @@ document.addEventListener('click', (e) => {
   // 修改模式同理：点在词或标注上是修改；点在这一行的其他地方跳到这一句
   if (S.mode === 'edit' && (inFocus || e.target.closest('#f-ann') || (lineEl && e.target.closest('.tok, .chip')))) return editClick(e);
   if (performance.now() - popClosedAt < 400) return; // 这一下是为了关掉读音小窗，不算点歌词
+  if (dismissSeek) return; // 这一下是为了收起资料库 / 词汇书 / 菜单这些，不跳到点中的那一句
   const near = e.target.closest('#f-prev, #f-next, .k-line'); // 大字视图里的上一句 / 下一句；KTV 样式里的两行
   // 敲击对齐时，大字样式里中间那句大字也能点（= 正在显示的这一句现在开始唱）；平时点它没有反应
   const i = lineEl ? +lineEl.dataset.i : near && near.dataset.i !== '' ? +near.dataset.i : inFocus && S.tapAlign ? S.active : -1;
@@ -2579,17 +2583,18 @@ $('#btn-offset').addEventListener('click', () => {
 $$('[data-close]').forEach((b) => b.addEventListener('click', () => { b.closest('.drawer, .modal').hidden = true; }));
 $$('.modal').forEach((m) => m.addEventListener('mousedown', (e) => { if (e.target === m) m.hidden = true; }));
 document.addEventListener('mousedown', (e) => {
+  dismissSeek = false;
   dismissClick = false; // 这一下是不是只用来收起什么东西（或者根本不该有反应），而不算点了底下的封面：见封面的点击
   if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset')) {
     // 时间对齐的面板开着时点到封面：不切换样式。和记词 / 修改模式一个道理，正对着歌词敲，手一滑点到封面不该把样式换了
     if (e.target.closest('#art-wrap')) dismissClick = true;
     // 敲击对齐开着时，点歌词是在对齐，不算「点到面板外面」，面板留着方便多敲几次；点到封面也不算，什么都不发生
-    if (!(S.tapAlign && e.target.closest('#lyrics, #focus, #ktv, #art-wrap'))) $('#offset-pop').hidden = true;
+    if (!(S.tapAlign && e.target.closest('#lyrics, #focus, #ktv, #art-wrap'))) { $('#offset-pop').hidden = true; dismissSeek = true; }
   }
-  if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) toggleMenu(false);
+  if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) { toggleMenu(false); dismissSeek = true; }
   if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) { $('#reading-pop').hidden = true; popClosedAt = performance.now(); }
   // 这一下是用来收起资料库 / 词汇书的：它只管收起
-  for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) { $(`#${id}`).hidden = true; dismissClick = true; }
+  for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) { $(`#${id}`).hidden = true; dismissClick = dismissSeek = true; }
 });
 
 $('#btn-play').addEventListener('click', () => control('playpause'));
@@ -2690,6 +2695,7 @@ applyKeys();
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    if (!$('#follow-pop').hidden) return answerOffer(false);
     hideSensePop();
     const open = $$('.modal, .drawer, .popover').filter((el) => !el.hidden);
     if (open.length) { open.forEach((el) => { el.hidden = true; }); $('#btn-menu').classList.remove('on'); }
@@ -2705,6 +2711,30 @@ addEventListener('resize', () => { scrollToActive(true); fitKtv(); });
 
 let toastTimer = 0;
 // action = { label, run }：提示后面带一个按钮（比如「撤销」），这时提示多留几秒
+// 自动模式：界面跟着一个播放器时另一个开始播放，程序不自己换过去，而是带一条 offer 过来，这里弹窗问。
+// 同一条只弹一次（答过之后、程序收到回答之前，还会有带着它的状态推过来）；对方停了，这一条撤回，弹窗跟着收起
+let offerKey = '';
+const withName = (pre, name, post = '') => `${pre}${/^[\w]/.test(name) && pre ? ' ' : ''}${name}${/[\w]$/.test(name) && post ? ' ' : ''}${post}`;
+function onOffer(o, cur) {
+  const el = $('#follow-pop');
+  if (!o) { offerKey = ''; el.hidden = true; return; }
+  $('#fp-track').textContent = [o.name, o.artist].filter(Boolean).join(' · '); // 对方换歌了，歌名跟着换
+  const key = `${o.source}|${o.at}`;
+  if (key === offerKey) return;
+  offerKey = key;
+  $('#fp-title').textContent = withName('', SRC_NAME[o.source], '正在播放');
+  $('#fp-go').textContent = withName('切换到', SRC_NAME[o.source]);
+  $('#fp-go').dataset.src = o.source;
+  $('#fp-stay').textContent = withName('留在', SRC_NAME[cur] || PLAYER.name);
+  el.hidden = false;
+}
+function answerOffer(go) {
+  $('#follow-pop').hidden = true;
+  control(go ? 'follow' : 'stay', go ? $('#fp-go').dataset.src : '');
+}
+$('#fp-go').addEventListener('click', () => answerOffer(true));
+$('#fp-stay').addEventListener('click', () => answerOffer(false));
+
 function toast(msg, action) {
   const el = $('#toast');
   el.textContent = msg;
@@ -3122,7 +3152,7 @@ function animateHidden(el, leaveMs, wrap = (f) => f()) {
     },
   });
 }
-for (const [sel, ms] of [['#vocab', 280], ['#queue', 280], ['#library', 280], ['#settings-modal', 240], ['#source-modal', 240], ['#menu', 180]]) animateHidden($(sel), ms);
+for (const [sel, ms] of [['#vocab', 280], ['#queue', 280], ['#library', 280], ['#settings-modal', 240], ['#source-modal', 240], ['#menu', 180], ['#follow-pop', 200]]) animateHidden($(sel), ms);
 animateHidden($('#dictbar'), 260, (change) => flip(playerParts(), change));
 
 // ---------------- 启动 ----------------

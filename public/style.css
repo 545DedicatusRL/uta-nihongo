@@ -883,7 +883,7 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border: 0; bord
 .keys { padding: 8px 16px; border-radius: 16px; background: rgba(255, 255, 255, .065); gap: 0 26px; }
 /* 快捷键列表和它下面那一行说明是同一块：下面那行不要自己的上圆角，也不要自己再起一道高光（见后面给 .form-row 加的那层渐变），
    不然看着是两张卡片叠着。选择器前面带上 .modal-body，才压得过上面「前一个不是 .form-row 的就给上圆角」那条 */
-.modal-body .keys + .form-row { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: 0; box-shadow: inset 0 .5px 0 var(--lg-line); }
+.modal-body .keys + .form-row { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: 0; box-shadow: none; }
 .keys:has(+ .form-row) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .key-row { padding: 6px 0; }
 .key-btn { border-radius: 8px; padding: 3px 10px; font-variant-numeric: tabular-nums; }
@@ -1090,3 +1090,19 @@ input[type=checkbox]:checked::before { background: #2a2635; box-shadow: 0 2px 5p
 /* 整体压暗一点，上面的白字才看得清；边角再暗一些 */
 #bg-mesh::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 100% at 40% 35%, rgba(10, 8, 18, .18), rgba(10, 8, 18, .5)); }
 @media (prefers-reduced-motion: reduce) { #bg-mesh i { animation: none; } }
+
+/* ---------- 自动模式：另一个播放器开始播放时的询问 ---------- */
+#follow-pop {
+  position: fixed; left: 0; right: 0; top: 78px; z-index: 55; margin: 0 auto; width: fit-content; min-width: 300px; max-width: min(440px, calc(100vw - 24px));
+  display: grid; gap: 3px; padding: 16px 18px 16px; border-radius: var(--r-lg); text-align: center;
+  background: rgba(22, 20, 32, .84); -webkit-backdrop-filter: var(--lg-blur-strong); backdrop-filter: var(--lg-blur-strong); box-shadow: var(--lg-edge), var(--lg-shadow);
+  animation: fp-in .3s cubic-bezier(.2, .8, .2, 1) both;
+}
+#follow-pop.leaving { animation: fp-out .2s var(--ease-in) both; pointer-events: none; }
+#fp-title { font: 650 15px/1.4 var(--font); }
+#fp-track { font: 13px/1.4 var(--font-ja); opacity: .68; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-acts { display: flex; gap: 8px; margin-top: 11px; }
+.fp-acts .btn { flex: 1; }
+@keyframes fp-in { from { opacity: 0; transform: translateY(-10px) scale(.97); } }
+@keyframes fp-out { to { opacity: 0; transform: translateY(-8px) scale(.97); } }
+@media (prefers-reduced-motion: reduce) { #follow-pop { animation: none; } }

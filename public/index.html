@@ -277,6 +277,12 @@
 <div id="tip" hidden></div>
 <!-- 程序退出后盖在界面上的提示 -->
 <div id="bye" hidden><div><b>唱歌学日语 已退出</b><span>可以关掉这个窗口了。想再用时，双击桌面上的「唱歌学日语」图标。</span></div></div>
+<!-- 自动模式：界面跟着一个播放器时，另一个开始播放了：问要不要换过去 -->
+<div id="follow-pop" role="dialog" aria-labelledby="fp-title" hidden>
+  <b id="fp-title"></b>
+  <span id="fp-track"></span>
+  <div class="fp-acts"><button class="btn" id="fp-stay"></button><button class="btn primary" id="fp-go"></button></div>
+</div>
 <div id="toast" hidden></div>
 <script type="module" src="app.js"></script>
 </body>
