@@ -2894,6 +2894,9 @@ function morphView(to) {
   };
   // 之前
   const a0 = rect(artEl), rad0 = px(artEl, 'borderTopLeftRadius'), sh0 = getComputedStyle(artEl).boxShadow, m0 = rect(metaEl), f0 = px($('#title'), 'fontSize');
+  // 封面自己可能带着缩放：滚动样式下暂停时它会缩小（style.css 里写在 transform 上），大字样式下鼠标悬停时会放大。
+  // k0 = 它现在看上去是排版尺寸的多少倍，折算圆角和阴影时要用
+  const k0 = a0.width / (artEl.offsetWidth || a0.width);
   const oldLine = toScroll ? cur : elScroll.children[a];
   let t0 = S.lines[a] && !S.lines[a].gap && oldLine ? measure(oldLine) : null;
   if (t0?.[0] && !toScroll) { const box = rect($('#lyrics')); if (t0[0].r.bottom < box.top || t0[0].r.top > box.bottom) t0 = null; } // 自己划走了、当前句不在屏幕上：这一句不飞
@@ -2921,6 +2924,9 @@ function morphView(to) {
   };
   const landed = performance.now() + MORPH.ms;
   document.addEventListener('mousemove', morphHover);
+  // 换样式的这一下，封面自带的那个缩放直接到位，不走它自己的过渡（滚动样式下 transform 上挂着 0.7 秒带回弹的过渡）：
+  // 不然量到的是过渡刚起步时的位置，飞到那里以后它还要再缩一截
+  artEl.style.transition = 'none';
   prefs.view = to; savePrefs(); applyPrefs();
   clearTimeout(freeTimer); elScroll.classList.remove('free');
   for (const an of glideAnims) an.cancel();
@@ -2934,10 +2940,14 @@ function morphView(to) {
   const a1 = rect(artEl), m1 = rect(metaEl), f1 = px($('#title'), 'fontSize'), s = a0.width / a1.width;
   const opt = { duration: MORPH.ms, easing: MORPH.easing };
   const optT = { ...opt, fill: 'both' }; // 飞着的字、标注线：飞完停在落点上，等真的那一句换上来
+  requestAnimationFrame(() => { artEl.style.transition = ''; }); // 位置量完了（上面那行已经按「直接到位」算过样式），过渡还回去
   artEl.style.zIndex = 3;
+  // 用 translate / scale，不碰 transform：封面自带的缩放写在 transform 上，两样叠在一起，落地时正好就是它该有的样子。
+  // 两样都是绕着封面的中心缩放的，所以平移按中心点算。f = 起步时封面一共被放大 / 缩小了多少倍，圆角和阴影按它折算回去
+  const w1 = artEl.offsetWidth || a1.width, f = a0.width / w1 / k0;
   artEl.animate([
-    { transformOrigin: '0 0', transform: `translate(${a0.left - a1.left}px, ${a0.top - a1.top}px) scale(${s})`, borderRadius: `${rad0 / s}px`, boxShadow: scalePx(sh0, s) },
-    { transformOrigin: '0 0', transform: 'none', borderRadius: `${px(artEl, 'borderTopLeftRadius')}px`, boxShadow: getComputedStyle(artEl).boxShadow },
+    { translate: `${a0.left + a0.width / 2 - a1.left - a1.width / 2}px ${a0.top + a0.height / 2 - a1.top - a1.height / 2}px`, scale: s, borderRadius: `${rad0 / f}px`, boxShadow: scalePx(sh0, f) },
+    { translate: '0 0', scale: 1, borderRadius: `${px(artEl, 'borderTopLeftRadius')}px`, boxShadow: getComputedStyle(artEl).boxShadow },
   ], opt).onfinish = () => { artEl.style.zIndex = ''; };
   metaEl.animate([{ transformOrigin: '0 0', transform: `translate(${m0.left - m1.left}px, ${m0.top - m1.top}px) scale(${f0 / f1})` }, { transformOrigin: '0 0', transform: 'none' }], opt);
   const fadeOut = (el) => el.animate([{}, { opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
