@@ -311,9 +311,17 @@ function buildLines(lrc, trans, roma, yrc) {
   // 把逐字时间挂到对应的行上
   if (yrc.length) {
     const key = (s) => s.replace(/\s/g, '');
+    const used = new Set();
     for (const l of lines) {
-      const y = yrc.find((y) => Math.abs(y.t - l.t) < 3 && key(y.words.map((w) => w.text).join('')) === key(l.text));
+      // 前后 3 秒内文字相同的那一行里，取时间最近、还没被用过的：同一句连唱两遍（「ここじゃない / ここじゃない」）时，
+      // 只取第一个对得上的会让两行都拿到第一遍的时间，唱第一遍时就直接亮到第二行去了
+      let y = null;
+      for (const c of yrc) {
+        if (used.has(c) || Math.abs(c.t - l.t) >= 3 || key(c.words.map((w) => w.text).join('')) !== key(l.text)) continue;
+        if (!y || Math.abs(c.t - l.t) < Math.abs(y.t - l.t)) y = c;
+      }
       if (!y) continue;
+      used.add(y);
       l.text = y.words.map((w) => w.text).join('').trimEnd();
       l.t = y.t;
       l.end = Math.max(y.t + y.d, y.words[y.words.length - 1].t + y.words[y.words.length - 1].d);
@@ -355,11 +363,13 @@ async function fetchQQ(mid, songId) {
   return out;
 }
 
+// 缓存的歌词按这个版本号认：整理歌词的规则改了就加 1，旧缓存会重新取一次
+const LYRICS_V = 2;
 export async function fetchLyrics(cand, refresh = false) {
   const file = `lyrics/${cand.source}-${safeName(cand.id)}.json`;
   if (!refresh) {
     const hit = readJSON(file, null);
-    if (hit) return hit;
+    if (hit && hit.v >= LYRICS_V) return hit; // 旧版本整理出来的缓存（比如重复句的时间配错了）重新取
   }
   const data = cand.source === 'qq' ? await fetchQQ(cand.id, cand.songId) : await fetchNetease(cand.id);
   const text = data.lines.map((l) => l.text).join('');
@@ -370,6 +380,7 @@ export async function fetchLyrics(cand, refresh = false) {
     roma: data.lines.some((l) => l.roma) || !!data.kana,
     words: data.lines.some((l) => l.ct),
   };
+  data.v = LYRICS_V;
   if (data.lines.length) writeJSON(file, data);
   return data;
 }
