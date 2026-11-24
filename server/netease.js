@@ -62,7 +62,7 @@ function evaluate(expression, timeout = 3000) {
 // ---------- 放进网易云页面里的小助手 ----------
 // 只装一次（页面重新载入后会重装）。snap() 返回当前状态；cmd() 执行控制命令。
 const AGENT = `(() => {
-  if (window.__uta && window.__uta.v === 4) return 'ok';
+  if (window.__uta && window.__uta.v === 5) return 'ok';
   const findStore = () => {
     const root = document.querySelector('#root') || document.body.firstElementChild;
     if (!root) return null;
@@ -78,14 +78,18 @@ const AGENT = `(() => {
   };
   const store = findStore();
   if (!store) return 'no-store';
-  const prog = { id: '', pos: 0, at: 0, seekTo: -1, seekAt: 0 };
+  // id：歌曲的数字编号；raw：底层用的那个写法（见下），拖进度时要原样用它
+  const prog = { id: '', raw: '', pos: 0, at: 0, seekTo: -1, seekAt: 0 };
   // 客户端底层每隔一小会儿报一次进度，形如 (歌曲ID, "12.07", "1.0000")。
+  // 歌曲 ID 的写法随客户端版本不同：有的是纯数字 "1469497524"，有的带前缀 "track-1469497524"。
+  // 只认纯数字的话，带前缀的那种一条都认不出来，进度就停在旧位置上不动，歌词完全对不上
+  const num = (id) => { const m = /^(?:[a-z]+-)?(\\d+)$/i.exec(String(id)); return m ? m[1] : ''; };
   // 给 window.MNBCallback 赋值不会替换原来的处理，而是登记一个「事后」监听（客户端自己的设计），
   // 每条底层回报都会再交给它一份；这里只认出进度那一种
   window.MNBCallback = (seqId, args) => {
     if (!Array.isArray(args) || args.length !== 3) return;
     const [id, pos, rate] = args;
-    if (!/^\\d+$/.test(String(id)) || !/^\\d+(\\.\\d+)?$/.test(String(pos)) || !/^\\d+\\.\\d{4}$/.test(String(rate))) return;
+    if (!num(id) || !/^\\d+(\\.\\d+)?$/.test(String(pos)) || !/^\\d+\\.\\d{4}$/.test(String(rate))) return;
     // 刚拖过进度：底层在真正跳过去之前还会报一两次旧位置。这些旧位置要是报给界面，
     // 歌词会先滚回原来那句再滚过来（看着像动画重复了一遍），所以离目标太远的先不认，
     // 直到报来的位置接近目标（或者过了 2.5 秒）
@@ -93,7 +97,7 @@ const AGENT = `(() => {
       if (Date.now() - prog.seekAt < 2500 && Math.abs(Number(pos) - prog.seekTo) > 1.5) return;
       prog.seekAt = 0;
     }
-    prog.id = String(id); prog.pos = Number(pos); prog.at = Date.now();
+    prog.id = num(id); prog.raw = String(id); prog.pos = Number(pos); prog.at = Date.now();
   };
   // 底部播放栏的按钮（标题形如「暂停（空格）」「下一首（⌘→）」）；只找屏幕上看得见的那个
   const button = (re) => {
@@ -102,7 +106,7 @@ const AGENT = `(() => {
   };
   const rid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
   window.__uta = {
-    v: 4,
+    v: 5,
     snap() {
       const pl = store.getState().playing || {};
       const t = pl.curTrack;
@@ -136,12 +140,15 @@ const AGENT = `(() => {
         case 'next': return click(/^下一首/);
         case 'prev': return click(/^上一首/);
         case 'seek': {
-          const id = String((pl.curTrack && pl.curTrack.id) || pl.resourceTrackId || '');
+          const id = String((pl.curTrack && pl.curTrack.id) || num(pl.resourceTrackId) || '');
           if (!id) throw new Error('没有正在播放的歌');
           const to = Math.max(0, Number(a) || 0);
-          // 和它自己拖进度条时发给底层的命令一样：audioplayer.seek(歌曲ID, "ID|seek|随机串", 秒数)
-          ncmChannelOSX.postMessage({ method: 'call', command: 'audioplayer.seek', params: [id, id + '|seek|' + rid(), to], seq: '::[[native-intf]]::uta-' + rid() });
-          prog.id = id; prog.pos = to; prog.at = Date.now(); prog.seekTo = to; prog.seekAt = Date.now();
+          // 和它自己拖进度条时发给底层的命令一样：audioplayer.seek(歌曲ID, "ID|seek|随机串", 秒数)。
+          // 这里的歌曲 ID 要用底层自己的写法（可能带 track- 前缀），写法不对它不理：
+          // 优先用它报进度时用的那个，还没报过就用界面状态里记的
+          const raw = prog.id === id && prog.raw ? prog.raw : [pl.playId, pl.resourceTrackId].find((x) => num(x) === id) || id;
+          ncmChannelOSX.postMessage({ method: 'call', command: 'audioplayer.seek', params: [raw, raw + '|seek|' + rid(), to], seq: '::[[native-intf]]::uta-' + rid() });
+          prog.id = id; prog.raw = raw; prog.pos = to; prog.at = Date.now(); prog.seekTo = to; prog.seekAt = Date.now();
           return null;
         }
         default: throw new Error('网易云模式不支持：' + c);
