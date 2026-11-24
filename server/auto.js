@@ -120,15 +120,31 @@ export async function control(cmd, a = '', b = '') {
     if (both) await SRC[old].control('pause').catch(() => {});
     return;
   }
+  // 留在这儿：另一个既然不听，让它停下（会弹窗就是因为两边都在响）
   if (cmd === 'stay') {
-    const o = otherOf(active);
+    const o = otherOf(active), both = playing(o) && playing(active);
     declined[o] = startedAt[o];
-    return publish();
+    publish();
+    if (both) await SRC[o].control('pause').catch(() => {});
+    return;
   }
-  // 从资料库点歌：是 Apple Music 播；网易云要是正在放，先让它停下，免得两边一起响
+  // 指定播放某一首：资料库里点的是 Apple Music 的歌；词汇书的「听这句」两边的歌都有（网易云的歌编号以 ne- 开头）。
+  // 另一个播放器要是正在放，先让它停下，免得两边一起响；没播成（比如网易云的播放列表里没有这首）再让它接着放
   if (cmd === 'playTrack') {
-    if (playing('netease')) await netease.control('pause').catch(() => {});
-    return apple.control(cmd, a, b);
+    const to = String(a).startsWith('ne-') ? 'netease' : 'apple', from = otherOf(to);
+    const wasPlaying = playing(from);
+    if (wasPlaying) await SRC[from].control('pause').catch(() => {});
+    let r;
+    try { r = await SRC[to].control(cmd, a, b); } catch (e) {
+      if (wasPlaying) await SRC[from].control('play').catch(() => {});
+      throw e;
+    }
+    // 界面马上跟到播这首歌的那个播放器，不等它的状态报上来：紧接着的「跳到这一句」才会发给对的那个
+    // 原来那个这一轮记成问过了：它要是停得慢一点，不至于刚换过来又弹窗问要不要换回去
+    declined[from] = startedAt[from];
+    if (active !== to) { active = to; had = true; }
+    publish();
+    return r;
   }
   return SRC[active].control(cmd, a, b);
 }

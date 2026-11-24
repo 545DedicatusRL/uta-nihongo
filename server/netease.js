@@ -6,6 +6,8 @@
 //   - 播放进度：订阅客户端自己的 audioplayer.PlayProgress 回报
 //   - 播放 / 暂停 / 上一首 / 下一首：点它界面底部的按钮（让它自己的状态保持一致）
 //   - 拖动进度：调用 audioplayer.seek
+//   - 指定播放某一首（词汇书的「听这句」）：只能播网易云「当前播放列表」里有的歌——让它自己的
+//     playing/playOneTrackInPlayingList 去播（和在它的播放列表里双击那一首一样）。列表里没有的歌没有办法点播
 // 不改动客户端的任何文件；只在它的页面里加一个只读的小对象 window.__uta（客户端重启后就没了）。
 // 资料库 / 指定播放某一首：网易云没有对应的接口，这个模式下不支持（界面里会藏起来）。
 import { spawn, execFile } from 'node:child_process';
@@ -62,7 +64,7 @@ function evaluate(expression, timeout = 3000) {
 // ---------- 放进网易云页面里的小助手 ----------
 // 只装一次（页面重新载入后会重装）。snap() 返回当前状态；cmd() 执行控制命令。
 const AGENT = `(() => {
-  if (window.__uta && window.__uta.v === 5) return 'ok';
+  if (window.__uta && window.__uta.v === 6) return 'ok';
   const findStore = () => {
     const root = document.querySelector('#root') || document.body.firstElementChild;
     if (!root) return null;
@@ -106,7 +108,7 @@ const AGENT = `(() => {
   };
   const rid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
   window.__uta = {
-    v: 5,
+    v: 6,
     snap() {
       const pl = store.getState().playing || {};
       const t = pl.curTrack;
@@ -129,7 +131,7 @@ const AGENT = `(() => {
         },
       };
     },
-    cmd(c, a) {
+    cmd(c, a, b) {
       const pl = store.getState().playing || {};
       const playing = pl.playingState === 2;
       const click = (re) => { const b = button(re); if (!b) throw new Error('找不到网易云的播放按钮'); b.click(); };
@@ -150,6 +152,31 @@ const AGENT = `(() => {
           ncmChannelOSX.postMessage({ method: 'call', command: 'audioplayer.seek', params: [raw, raw + '|seek|' + rid(), to], seq: '::[[native-intf]]::uta-' + rid() });
           prog.id = id; prog.raw = raw; prog.pos = to; prog.at = Date.now(); prog.seekTo = to; prog.seekAt = Date.now();
           return null;
+        }
+        // 播放编号是 a 的那首歌；b 不为空的话，等它真的播起来以后跳到第 b 秒
+        case 'playTrack': {
+          const want = num(a);
+          const to = b === '' || b == null ? -1 : Math.max(0, Number(b) || 0);
+          const curId = () => { const p = store.getState().playing || {}; return String((p.curTrack && p.curTrack.id) || ''); };
+          if (!want) throw new Error('不是网易云的歌');
+          if (curId() !== want) {
+            const list = (store.getState().playingList || {}).curPlayingList || [];
+            const item = list.find((x) => x && x.track && String(x.track.id) === want);
+            if (!item) throw new Error('这首歌不在网易云现在的播放列表里。先在网易云里播放它，再回来点「听这句」');
+            store.dispatch({ type: 'playing/playOneTrackInPlayingList', payload: { item: item.resourceId } });
+          } else if (!playing) click(/^播放/);
+          if (to < 0) return null;
+          // 换歌要一会儿：等界面上已经是这首、底层也开始报这首的进度了，再跳过去（早了会跳在上一首上，或者被换歌冲掉）
+          return new Promise((resolve) => {
+            const t0 = Date.now();
+            const iv = setInterval(() => {
+              const ready = curId() === want && prog.id === want && Date.now() - prog.at < 1500;
+              if (!ready && Date.now() - t0 < 7000) return;
+              clearInterval(iv);
+              if (ready) window.__uta.cmd('seek', to);
+              resolve(ready ? 'ok' : 'slow');
+            }, 100);
+          });
         }
         default: throw new Error('网易云模式不支持：' + c);
       }
@@ -231,11 +258,20 @@ export function stopWatcher() {
 }
 
 // ---------- 播放控制 ----------
-export async function control(cmd, a = '') {
+// playTrack：a 是歌曲编号（'ne-123' 或 '123'），b 是要跳到的秒数（可以不给）。
+// 注意和 music.js 不一样：那边的 b 是播放列表的编号
+export async function control(cmd, a = '', b = '') {
   if (cmd === 'relaunch') { await relaunch(); return 'ok'; }
   if (cmd === 'volume') return 'ok'; // 音量交给网易云自己
   if (!ws) throw new Error('还没有连上网易云');
-  await evaluate(`window.__uta.cmd(${JSON.stringify(cmd)}, ${JSON.stringify(String(a))})`);
+  if (cmd === 'playTrack') a = String(a).replace(/^ne-/, '');
+  // 点播要等它换好歌再跳到那一句，给的时间长一些
+  try {
+    await evaluate(`window.__uta.cmd(${JSON.stringify(cmd)}, ${JSON.stringify(String(a))}, ${JSON.stringify(String(b))})`, cmd === 'playTrack' ? 9000 : 3000);
+  } catch (e) {
+    // 页面里抛出来的错带着一串调用位置，只留第一行那句话（会直接显示给用户）
+    throw new Error(String(e.message || e).split('\n')[0].replace(/^(Uncaught )?Error: /, ''));
+  }
   return 'ok';
 }
 

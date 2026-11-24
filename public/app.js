@@ -2326,9 +2326,14 @@ $('#vocab-list').addEventListener('click', async (e) => {
       { opacity: 0, height: '0px', marginTop: '0px', marginBottom: '0px', paddingTop: '0px', paddingBottom: '0px', borderWidth: '0px' },
     ], { duration: 240, easing: 'cubic-bezier(.3, .75, .2, 1)', fill: 'forwards' }).onfinish = renderVocab;
   } else if (v) {
-    if (S.track?.pid !== v.song?.pid) {
-      if (!v.song?.pid) return toast('这首歌不在资料库里，无法直接播放');
-      await control('playTrack', v.song.pid);
+    const pid = v.song?.pid || '', ne = pid.startsWith('ne-');
+    if (S.track?.pid !== pid) {
+      if (!pid) return toast('这首歌不在资料库里，无法直接播放');
+      // 只连着一个播放器的模式下，另一个播放器里记的词没法从这里播
+      if (PLAYER.id !== 'auto' && ne !== (PLAYER.id === 'netease')) return toast(`这个词是在${ne ? '网易云音乐' : ' Apple Music '}里记的，现在的播放器设置下不能从这里播放`);
+      // 网易云的歌：点播和「跳到这一句」一起交给它，它要等真的换到这首歌才能跳（见 netease.js 的 playTrack）
+      if (ne) return api.post('/api/control', { cmd: 'playTrack', a: pid, b: v.lineTime || 0 }).catch((err) => toast(err.message));
+      await control('playTrack', pid);
       await new Promise((r) => setTimeout(r, 900));
     } else if (S.player?.state !== 'playing') control('play');
     seekTo((v.lineTime || 0) + S.offset);
