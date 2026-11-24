@@ -2,8 +2,6 @@
 
 用本机的 Apple Music 或网易云音乐播放日语歌，同步显示带假名、中文翻译、语法 / 词汇标注的歌词。
 
-介绍网站：<https://raaaaaaayx.github.io/uta-nihongo/>
-
 ## 直接下载 Mac App（推荐）
 
 到 [Releases](https://github.com/545DedicatusRL/uta-nihongo/releases/latest) 下载 `uta-nihongo-macOS-arm64.zip`，解压后把「唱歌学日语」拖进「应用程序」文件夹即可。不需要安装 Node.js，也不需要浏览器。
