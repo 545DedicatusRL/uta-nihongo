@@ -253,7 +253,7 @@
       </div>
 
       <h3>说明</h3>
-      <p class="muted">播放由本机的 Apple Music 或网易云音乐完成，本程序只读取资料库和播放进度。歌词来自网易云音乐 / QQ 音乐；假名由本地词库（kuromoji）标注，并用歌词源自带的罗马音自动纠正。词汇书、读音修正、时间偏移都保存在程序目录的 data 文件夹里。</p>
+      <p class="muted">播放由本机的 Apple Music 完成，本程序只读取资料库和播放进度。歌词来自网易云音乐 / QQ 音乐；假名由本地词库（kuromoji）标注，并用歌词源自带的罗马音自动纠正。词汇书、读音修正、时间偏移都保存在程序目录的 data 文件夹里。</p>
       <p class="muted" id="about-version"></p>
       <div class="form-row"><span>使用指引</span><button class="btn" id="set-guide">再看一遍</button></div>
 
@@ -262,8 +262,6 @@
       <div class="marks set-lib" id="set-marks" hidden></div>
 
       <h3>程序</h3>
-      <div class="form-row"><span>播放器</span><select id="set-player"><option value="apple">Apple Music</option><option value="netease">网易云音乐</option></select><button class="btn small" id="set-player-apply" hidden>现在重启</button></div>
-      <p class="muted">网易云音乐模式：在网易云里选歌，这里显示歌词；没有资料库和播放列表。第一次切换时，程序会重新打开一次网易云（带上读取进度用的调试端口）。</p>
       <div class="form-row"><span>界面窗口</span><select id="set-browser"></select><button class="btn small" id="set-browser-apply" hidden>现在就换</button></div>
       <p class="muted">Chrome、Edge 这类浏览器能把界面开成独立窗口（没有地址栏和标签页）；系统默认浏览器只能当普通标签页打开。</p>
       <div class="form-row"><span>缓存</span><button class="btn" id="set-cache">清除缓存</button><span class="muted" id="set-cache-info"></span></div>

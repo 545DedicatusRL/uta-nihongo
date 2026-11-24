@@ -5,22 +5,18 @@ const noMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const focusView = () => document.getElementById('app').classList.contains('view-focus');
 const hasLyrics = () => !!document.querySelector('#scroll .line');
-// 网易云模式下没有资料库（按钮被藏起来了）
-const noLibrary = () => !!document.getElementById('btn-library')?.hidden;
 
 // el：要圈出来的东西（没有就是居中的一张卡）；up：圈它外面的那一组；big：一大块区域，卡片放在旁边而不是下面
 const STEPS = [
   {
     welcome: true,
     title: '欢迎用「唱歌学日语」',
-    text: () => `在 ${noLibrary() ? '网易云音乐' : 'Apple Music'} 里放一首日文歌，这里就会跟着显示歌词：汉字上面有假名，下面有中文翻译，还会标出这一句里的语法点和生词。`,
+    text: '在 Apple Music 里放一首日文歌，这里就会跟着显示歌词：汉字上面有假名，下面有中文翻译，还会标出这一句里的语法点和生词。',
   },
   {
     el: '#btn-library',
     title: '先挑一首歌',
-    text: () => (noLibrary()
-      ? '在<b>网易云音乐</b>里选歌播放，这里会自动跟上；播放、暂停、拖进度在两边都能操作。'
-      : '<b>资料库</b>里是你 Apple Music 里的歌，默认只列日文歌，也能按专辑和播放列表找。直接在 Apple Music 里点播放也一样。'),
+    text: '<b>资料库</b>里是你 Apple Music 里的歌，默认只列日文歌，也能按专辑和播放列表找。直接在 Apple Music 里点播放也一样。',
   },
   {
     el: () => (focusView() ? '#focus' : '#lyrics'), big: true,
