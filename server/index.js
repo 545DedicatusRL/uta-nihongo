@@ -17,6 +17,7 @@ import { ensureDesktopShortcut } from './shortcut.js';
 import { createQueue } from './queue.js';
 import { showUI, installedBrowsers, pickBrowser } from './window.js';
 import { notoCSS, notoFile } from './fonts.js';
+import { checkUpdate } from './update.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError, resetDictCache } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
@@ -336,6 +337,7 @@ const routes = {
     res.end('﻿' + rows.join('\n'));
   },
 
+  'GET /api/update': async (req, res) => send(res, 200, await checkUpdate()),
   'GET /api/info': (req, res) => send(res, 200, { app: !!process.env.UTA_APP, player: PLAYER, playerName: music.NAME, caps: music.caps, root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size, windows: appClients.size }),
   // 更新代码后原地重启：退出并让启动脚本重新拉起。不是由启动脚本启动的（如 npm start）则只会退出。
   'POST /api/restart': (req, res) => {

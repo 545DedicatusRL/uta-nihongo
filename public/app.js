@@ -3194,3 +3194,29 @@ document.addEventListener('dragstart', (e) => {
   const el = e.target.nodeType === 1 ? e.target : e.target.parentElement;
   if (!el?.closest('input, textarea, [contenteditable]')) e.preventDefault();
 });
+
+// 检查更新：每次打开界面问一次本地服务（服务每次启动只去 GitHub 查一次）。有新版本就在顶上露一条，
+// 点「以后再说」就不再提醒这个版本（下一个新版本还会提醒）
+let isApp = false;
+function showUpdate(u) {
+  if (!u?.newer || !u.latest) return;
+  try { if (localStorage.getItem('uta-skip-update') === u.latest) return; } catch {}
+  $('#update-bar')?.remove();
+  const bar = document.createElement('div');
+  bar.id = 'update-bar';
+  bar.setAttribute('role', 'status');
+  const act = isApp && (u.download || u.page)
+    ? `<a class="ub-go" href="${esc(u.page)}" target="_blank" rel="noopener">下载新版</a>`
+    : `<button class="ub-go" type="button">复制更新命令</button>`;
+  bar.innerHTML = `<span class="ub-text">有新版本 <b>v${esc(u.latest)}</b>（当前 v${esc(u.current)}）</span>${act}<button class="ub-later" type="button">以后再说</button>`;
+  document.body.append(bar);
+  const close = () => { bar.classList.add('leaving'); setTimeout(() => bar.remove(), 220); };
+  bar.querySelector('.ub-later').addEventListener('click', () => { try { localStorage.setItem('uta-skip-update', u.latest); } catch {} close(); });
+  const go = bar.querySelector('.ub-go');
+  if (go.tagName === 'BUTTON') go.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(u.install); toast('已复制：粘贴到「终端」里运行，词汇书和设置会保留'); }
+    catch { toast(u.install); }
+  });
+  else go.addEventListener('click', () => toast('下载后解压，替换「应用程序」里的旧版即可'));
+}
+api.get('/api/info').then((i) => { isApp = !!i.app; return api.get('/api/update'); }).then(showUpdate).catch(() => {});
