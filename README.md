@@ -4,7 +4,7 @@
 
 ## 直接下载 Mac App（推荐）
 
-到 [Releases](https://github.com/raaaaaaayx/uta-nihongo/releases/latest) 下载 `uta-nihongo-macOS-arm64.zip`，解压后把「唱歌学日语」拖进「应用程序」文件夹即可。不需要安装 Node.js，也不需要浏览器。
+到 [Releases](https://github.com/545DedicatusRL/uta-nihongo/releases/latest) 下载 `uta-nihongo-macOS-arm64.zip`，解压后把「唱歌学日语」拖进「应用程序」文件夹即可。不需要安装 Node.js，也不需要浏览器。
 
 - 需要 Apple 芯片（M 系列）的 Mac，macOS 12 或更新
 - 第一次打开时 macOS 会提示无法验证开发者：在「应用程序」里 **右键 → 打开**，再点「打开」
@@ -17,7 +17,7 @@
 打开「终端」输入：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/raaaaaaayx/uta-nihongo/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/545DedicatusRL/uta-nihongo/main/install.sh | bash
 ```
 
 程序会被装到 `~/Applications/唱歌学日语`，桌面会生成「唱歌学日语」图标。第一次启动时系统会问是否允许它控制「音乐」，点 **允许**。
@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/raaaaaaayx/uta-nihongo/main/install
 
 安装到其他位置 `UTA_DIR=`，例如 `curl -fsSL …/install.sh | UTA_DIR=~/uta bash`。
 
-使用git：`git clone https://github.com/raaaaaaayx/uta-nihongo.git`，然后双击 `唱歌学日语.command`。
+使用git：`git clone https://github.com/545DedicatusRL/uta-nihongo.git`，然后双击 `唱歌学日语.command`。
 
 ## 启动
 
