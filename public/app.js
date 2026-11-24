@@ -219,10 +219,9 @@ function withGaps(lines) {
   return out;
 }
 
-// ---------------- 背景：从封面取色，几团色块缓慢流动（Apple Music 歌词页那样） ----------------
-// 封面缩成 48×48，按颜色分桶统计；挑最多 5 种彼此差得开的主色（偏灰的权重低一些，不然很多封面挑出来一片灰），
-// 记下各自占多少。每种颜色一团柔和的圆形渐变，占得越多那团越大；最多的那个颜色同时做底色。
-// 色块的漂移、旋转、伸缩全在 CSS 里（只动 transform，交给显卡）；换歌时颜色和大小慢慢过渡过去
+// ---------------- 背景：从封面取色，几条浪缓慢流动 ----------------
+// 封面缩成 48×48，按颜色分桶统计；挑最多 5 种彼此差得开的主色（偏灰的权重低一些，不然很多封面挑出来一片灰）。
+// 最多的那个颜色做底色，其余的各给一条浪（形状见 waveMask，流动全在 CSS 里）；换歌时颜色慢慢过渡过去
 async function albumPalette(url) {
   const img = new Image();
   img.crossOrigin = 'anonymous';
@@ -272,6 +271,24 @@ function rgbToHsl(r, g, b) {
   const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [h / 6, s, l];
 }
+// 一条浪的遮罩：一屏宽一个周期（1000 单位），上下两条边各是几段正弦叠起来的起伏，周期都是整数次，左右接得上。
+// 边缘用高斯模糊柔化；路径往左右各多画一个周期，模糊到边上时取的是下一个周期的样子，重复铺开看不出接缝
+function waveMask() {
+  const R = Math.random, TAU = Math.PI * 2;
+  const edge = (base, amp) => {
+    const parts = [1, 2, 3].map((k) => ({ k: k === 1 ? 1 + Math.floor(R() * 2) : k + Math.floor(R() * 2), a: amp / k * (0.6 + R() * 0.6), p: R() * TAU }));
+    return (x) => base + parts.reduce((y, q) => y + q.a * Math.sin(TAU * q.k * x / 1000 + q.p), 0);
+  };
+  const mid = 190 + R() * 20, thick = 110 + R() * 60;
+  const top = edge(mid - thick / 2, 26 + R() * 20), bot = edge(mid + thick / 2, 18 + R() * 16);
+  const pts = [];
+  for (let x = -1000; x <= 2000; x += 20) pts.push(`${x},${top(x).toFixed(1)}`);
+  for (let x = 2000; x >= -1000; x -= 20) pts.push(`${x},${bot(x).toFixed(1)}`);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 400" preserveAspectRatio="none">`
+    + `<filter id="b" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="26 30"/></filter>`
+    + `<polygon filter="url(#b)" fill="#fff" points="${pts.join(' ')}"/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
 let meshUrl = '';
 async function paintMesh(url) {
   if (url === meshUrl) return;
@@ -282,18 +299,17 @@ async function paintMesh(url) {
   if (meshUrl !== url) return; // 这期间又换了歌
   if (!pal || !pal.length) { mesh.classList.remove('on'); $('#bg').classList.remove('meshed'); return; }
   while (pal.length < 5) pal.push(pal[pal.length % Math.max(1, pal.length)]); // 颜色少的封面：重复用
-  const blobs = [...mesh.children];
+  const waves = [...mesh.children];
   mesh.style.setProperty('--base', meshColor(pal[0]));
-  // 最多的颜色已经是底色：色块从第二多的颜色排起，它自己放到最后一团（上边那团）
-  [...pal.slice(1), pal[0]].forEach((p, i) => {
-    blobs[i].style.setProperty('--mc', meshColor(p));
-    // 占得越多越大：48vmax 起，最大 80vmax（最多的颜色已经是底色，色块不用铺满）
-    blobs[i].style.setProperty('--s', `${Math.round(48 + Math.min(1, p.share * 2) * 32)}vmax`);
-  });
-  // 第一次上色时，每团从自己路线上随机的一点开始，免得每次打开都是同一个样子
+  // 最多的颜色已经是底色：浪从第二多的颜色排起，它自己放到最后一条（最淡、最宽的那条）
+  [...pal.slice(1), pal[0]].forEach((p, i) => waves[i].style.setProperty('--mc', meshColor(p)));
+  // 浪的形状第一次上色时随机生成，每次打开都不一样；之后换歌只换颜色
   if (!mesh.dataset.seeded) {
     mesh.dataset.seeded = '1';
-    blobs.forEach((b) => { b.style.animationDelay = `${-Math.round(Math.random() * 60)}s`; });
+    waves.forEach((w) => {
+      w.style.setProperty('--wave', waveMask());
+      w.style.animationDelay = `${-Math.round(Math.random() * 100)}s, ${-Math.round(Math.random() * 30)}s`;
+    });
   }
   mesh.classList.add('on');
   $('#bg').classList.add('meshed');

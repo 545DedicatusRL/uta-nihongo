@@ -1064,32 +1064,29 @@ input[type=checkbox]:checked::before { background: #2a2635; box-shadow: 0 2px 5p
 #app.view-apple:not(.playing) #art-wrap { transform: translateZ(0) scale(.82); transition: transform .55s cubic-bezier(.3, .7, .3, 1); }
 @media (prefers-reduced-motion: reduce) { .view-apple #art-wrap { transition: none; } }
 
-/* ---------- 背景：封面颜色的色块缓慢流动（Apple Music 歌词页那样） ----------
-   底色是封面里最多的颜色；五团柔和的椭圆渐变（颜色、大小由 app.js 的 paintMesh 按封面取色给）
-   分在四角和上边，各自沿一圈闭合的路线慢慢绕、转、伸缩，不会有一团大圆停在正中间。
-   每次打开时各团从路线上随机的一点开始（app.js 给负的 animation-delay），所以不会每次都是同一个样子。
-   只动 transform（交给显卡），不用模糊滤镜；换歌时颜色（注册过的 --mc）和大小慢慢过渡 */
+/* ---------- 背景：封面颜色像海浪一样缓慢流动 ----------
+   底色是封面里最多的颜色；上面叠五条横贯全屏的「浪」，颜色由 app.js 的 paintMesh 按封面取色给。
+   每条浪的形状（上下两条起伏的边，边缘已经模糊过）是 app.js 生成的一张 SVG，当作遮罩（mask）铺在一条两屏宽的长条上，
+   横着无缝重复；长条左右平移（translate）就是浪往前推，上下起伏、厚薄变化（transform）是浪的涌动。
+   遮罩是静态图，只画一次；动的只有 translate / transform，交给显卡。换歌时颜色（注册过的 --mc）慢慢过渡 */
 @property --mc { syntax: '<color>'; inherits: false; initial-value: rgba(0, 0, 0, 0); }
 #bg-mesh { position: absolute; inset: 0; overflow: hidden; background: var(--base, transparent); opacity: 0; transition: opacity 1.4s ease, background-color 1.6s ease; }
 #bg-mesh.on { opacity: 1; }
-#bg.meshed #bg-img { opacity: .18; } /* 有色块时，模糊的封面只留一点点纹理 */
-#bg-mesh i { position: absolute; left: var(--x); top: var(--y); width: var(--s, 60vmax); height: calc(var(--s, 60vmax) * .72);
-  margin: calc(var(--s, 60vmax) * -.36) 0 0 calc(var(--s, 60vmax) * -.5); border-radius: 50%;
-  background: radial-gradient(closest-side, var(--mc) 0%, color-mix(in srgb, var(--mc) 78%, transparent) 28%,
-    color-mix(in srgb, var(--mc) 42%, transparent) 58%, color-mix(in srgb, var(--mc) 12%, transparent) 82%, transparent 100%);
-  transition: --mc 1.6s ease, width 2.2s ease, height 2.2s ease, margin 2.2s ease; will-change: transform;
-  animation: var(--anim) linear infinite; }
-#bg-mesh i:nth-child(1) { --x: 12%; --y: 14%; --anim: mesh-1 48s; }
-#bg-mesh i:nth-child(2) { --x: 88%; --y: 12%; --anim: mesh-2 56s; }
-#bg-mesh i:nth-child(3) { --x: 10%; --y: 90%; --anim: mesh-3 44s; }
-#bg-mesh i:nth-child(4) { --x: 90%; --y: 86%; --anim: mesh-4 52s; }
-#bg-mesh i:nth-child(5) { --x: 50%; --y: 6%;  --anim: mesh-5 40s; }
-/* 每条路线首尾相同，循环播放时接得上；最远也只往中间伸进来四分之一屏左右 */
-@keyframes mesh-1 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(18vw, 6vh) rotate(40deg) scale(1.1, .95); } 50% { transform: translate(10vw, 22vh) rotate(95deg) scale(.92); } 75% { transform: translate(-4vw, 12vh) rotate(150deg) scale(1.05, 1.12); } }
-@keyframes mesh-2 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(-8vw, 18vh) rotate(-50deg) scale(.94, 1.08); } 50% { transform: translate(-22vw, 8vh) rotate(-110deg) scale(1.1); } 75% { transform: translate(-10vw, -6vh) rotate(-160deg) scale(.96); } }
-@keyframes mesh-3 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(6vw, -18vh) rotate(55deg) scale(1.08, .94); } 50% { transform: translate(22vw, -8vh) rotate(120deg) scale(.95); } 75% { transform: translate(12vw, 6vh) rotate(170deg) scale(1.1); } }
-@keyframes mesh-4 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(-18vw, -4vh) rotate(-45deg) scale(1.06); } 50% { transform: translate(-12vw, -22vh) rotate(-100deg) scale(.92, 1.1); } 75% { transform: translate(4vw, -12vh) rotate(-155deg) scale(1.04); } }
-@keyframes mesh-5 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(-24vw, 4vh) rotate(30deg) scale(1.08); } 50% { transform: translate(0, 14vh) rotate(80deg) scale(.9, 1.06); } 75% { transform: translate(24vw, 4vh) rotate(130deg) scale(1.04); } }
+#bg.meshed #bg-img { opacity: .18; } /* 有浪时，模糊的封面只留一点点纹理 */
+#bg-mesh i { position: absolute; left: 0; top: var(--top); width: 200vw; height: var(--h, 64vh); background: var(--mc); opacity: var(--o, 1);
+  -webkit-mask: var(--wave) 0 0 / 100vw 100% repeat-x; mask: var(--wave) 0 0 / 100vw 100% repeat-x;
+  transition: --mc 1.6s ease; will-change: transform, translate;
+  animation: var(--drift) linear infinite, var(--swell) ease-in-out infinite alternate; }
+#bg-mesh i:nth-child(1) { --top: -26vh; --drift: wave-left 70s;  --swell: swell-a 19s; }
+#bg-mesh i:nth-child(2) { --top: 2vh;   --drift: wave-right 88s; --swell: swell-b 23s; --o: .85; }
+#bg-mesh i:nth-child(3) { --top: 30vh;  --drift: wave-left 62s;  --swell: swell-a 27s; --o: .9; }
+#bg-mesh i:nth-child(4) { --top: 58vh;  --drift: wave-right 76s; --swell: swell-b 21s; }
+#bg-mesh i:nth-child(5) { --top: 16vh;  --drift: wave-left 104s; --swell: swell-b 31s; --o: .5; --h: 80vh; }
+/* 长条两屏宽、遮罩一屏一个周期：平移一整屏正好回到原样，循环接得上 */
+@keyframes wave-left  { from { translate: 0 0; } to { translate: -100vw 0; } }
+@keyframes wave-right { from { translate: -100vw 0; } to { translate: 0 0; } }
+@keyframes swell-a { from { transform: translateY(-3vh) scaleY(.88); } to { transform: translateY(5vh) scaleY(1.14); } }
+@keyframes swell-b { from { transform: translateY(4vh) scaleY(1.1); } to { transform: translateY(-4vh) scaleY(.9); } }
 /* 整体压暗一点，上面的白字才看得清；边角再暗一些 */
 #bg-mesh::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 100% at 40% 35%, rgba(10, 8, 18, .18), rgba(10, 8, 18, .5)); }
 @media (prefers-reduced-motion: reduce) { #bg-mesh i { animation: none; } }
