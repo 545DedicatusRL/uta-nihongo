@@ -1,8 +1,12 @@
 // 自动模式：同时盯着 Apple Music 和网易云音乐。
 // 接口和 music.js / netease.js 一样，index.js 不用分辨。
-//   - 界面上已经有一首歌了（在播或暂停着）：留在它那儿。另一个播放器开始播放时不自己换过去，
-//     而是在状态里带上 offer，界面弹窗问用户「换过去」还是「留在这儿」（control 的 follow / stay）
-//   - 跟着的那个连歌都没有了（没开、关掉了）：另一个有歌就直接跟它，这时没什么可问的
+// 界面跟着其中一个（active）。要不要换到另一个，只看「另一个是不是真的在播」：
+//   - 另一个没在播（只是开着、暂停着一首歌）：不换。跟着的这个一首歌播完了、正在换下一首的那一会儿
+//     也留在它这儿，不会跳到后台那个暂停着的播放器上再跳回来
+//   - 另一个在播，跟着的这个没在播（暂停着，或者根本没有歌）：直接换过去，不问。
+//     用户自己去另一个播放器点了播放，意思已经很明白了
+//   - 两个都在播：不自己换，在状态里带上 offer，界面弹窗问用户「换过去」还是「留在这儿」
+//     （control 的 follow / stay）
 //   - 刚启动的头几秒不问：两边的状态是先后报上来的，这时哪个在播就跟哪个
 // 网易云没开时不替用户打开（只用网易云的模式才会）
 import { EventEmitter } from 'node:events';
@@ -20,7 +24,14 @@ const stoppedAt = { apple: 0, netease: 0 };
 const declined = { apple: 0, netease: 0 };
 const SAME_RUN = 3000; // 停了不到这么久又接着播（换歌、缓冲时会闪一下），算同一轮，不重新问
 const BOOT = 3000;
+// 跟着的这个刚停下（不是暂停）不到这么久：可能只是在换歌（一首播完到下一首响起来之间会停一下），先不急着换到另一个
+const GAP = 2000;
+// 跟着的这个连程序都关了，过这么久还没回来：另一个要是有歌（哪怕暂停着）就换过去。
+// 等一等是因为网易云那边连接偶尔会断一下再连上，那不算关了
+const GONE = 3000;
 let active = 'apple';
+let had = false; // 跟着的这个播放器有过歌（「用过它」）。一次都没有过的话，另一个有歌就直接跟另一个，比如刚启动时
+const goneAt = { apple: 0, netease: 0 }; // 从什么时候起读不到这个播放器了（0 = 读得到）
 let bootAt = Date.now();
 let offerKey = '';
 
@@ -37,18 +48,24 @@ function pick() {
     if (a) return 'apple';
     if (n) return 'netease';
   }
-  if (last[active].track) return active;
   const other = otherOf(active);
-  if (last[other].track) return other;
+  if (playing(other) && !playing(active)) {
+    // 暂停是用户自己按的，不用等；其余的「没在播」（一首播完、停止）可能只是换歌的间隙，等过了 GAP 再换
+    return last[active].state === 'paused' || Date.now() - stoppedAt[active] > GAP ? other : active;
+  }
+  if (last[active].track) return active;
+  // 跟着的这个现在没有歌，另一个也没在播
+  if (last[other].track && (!had || (goneAt[active] && Date.now() - goneAt[active] > GONE))) return other;
+  if (had) return active;
   // 网易云开着但读不到（不是由本程序打开的）：跟着它，界面上会出「重新打开网易云」的按钮
   if (last.netease.errno === 'netease-no-port' && !last.apple.running) return 'netease';
   return last.apple.running || !last.netease.running ? 'apple' : 'netease';
 }
 
-// 另一个播放器正在播、这一轮还没问过：要问用户的那一条
+// 两个都在播、另一个的这一轮还没问过：要问用户的那一条
 function offerNow() {
   const o = otherOf(active);
-  if (booting() || !playing(o) || declined[o] === startedAt[o]) return null;
+  if (booting() || !playing(o) || !playing(active) || declined[o] === startedAt[o]) return null;
   const t = last[o].track;
   return { source: o, at: startedAt[o], pid: t.pid, name: t.name || '', artist: t.artist || '' };
 }
@@ -63,7 +80,9 @@ function onState(k, s) {
   const was = last[k].state === 'playing', now = s.state === 'playing';
   if (now && !was && Date.now() - stoppedAt[k] > SAME_RUN) startedAt[k] = Date.now();
   if (was && !now) stoppedAt[k] = Date.now();
+  if (s.running) goneAt[k] = 0; else if (!goneAt[k]) goneAt[k] = Date.now();
   last[k] = s;
+  if (last[active].track) had = true;
   const next = pick();
   // 只转发正在跟着的那个的状态（两边各自每 250ms 报一次，不跟着的那边不用转）；
   // 换了来源、或者要问的那一条变了（出现、撤回、换了歌）时立刻转一次
@@ -71,7 +90,7 @@ function onState(k, s) {
     const o = offerNow();
     if ((o ? `${o.source}|${o.at}|${o.pid}` : '') === offerKey) return;
   }
-  active = next;
+  if (next !== active) { active = next; had = !!last[active].track; }
   publish();
 }
 apple.player.on('state', (s) => onState('apple', s));
@@ -96,6 +115,7 @@ export async function control(cmd, a = '', b = '') {
     const old = active, both = playing(old) && playing(a);
     declined[old] = startedAt[old];
     active = a;
+    had = true;
     publish();
     if (both) await SRC[old].control('pause').catch(() => {});
     return;

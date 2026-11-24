@@ -1095,7 +1095,9 @@ input[type=checkbox]:checked::before { background: #2a2635; box-shadow: 0 2px 5p
 #follow-pop {
   position: fixed; left: 0; right: 0; top: 78px; z-index: 55; margin: 0 auto; width: fit-content; min-width: 300px; max-width: min(440px, calc(100vw - 24px));
   display: grid; gap: 3px; padding: 16px 18px 16px; border-radius: var(--r-lg); text-align: center;
-  background: rgba(22, 20, 32, .84); -webkit-backdrop-filter: var(--lg-blur-strong); backdrop-filter: var(--lg-blur-strong); box-shadow: var(--lg-edge), var(--lg-shadow);
+  /* 和菜单、抽屉同一块玻璃：透明的底色 + 表面的反光 + 后面的东西模糊压暗 */
+  background: var(--lg-panel) var(--lg-sheen); -webkit-backdrop-filter: var(--lg-blur-strong); backdrop-filter: var(--lg-blur-strong);
+  box-shadow: var(--lg-edge), var(--lg-shadow); text-shadow: 0 1px 2px rgba(0, 0, 0, .25);
   animation: fp-in .3s cubic-bezier(.2, .8, .2, 1) both;
 }
 #follow-pop.leaving { animation: fp-out .2s var(--ease-in) both; pointer-events: none; }
