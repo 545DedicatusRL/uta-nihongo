@@ -10,17 +10,22 @@ import {
 } from './store.js';
 import * as appleMusic from './music.js';
 import * as netease from './netease.js';
+import * as auto from './auto.js';
 import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
 import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
 import { createQueue } from './queue.js';
 import { showUI, installedBrowsers, pickBrowser } from './window.js';
+import { notoCSS, notoFile } from './fonts.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError, resetDictCache } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
-// 用哪个播放器：Apple Music（默认）或网易云音乐。设置里改了以后重启程序生效；环境变量 UTA_PLAYER 优先
-const PLAYER = (process.env.UTA_PLAYER || getSettings().player) === 'netease' ? 'netease' : 'apple';
-const music = PLAYER === 'netease' ? netease : appleMusic;
+// 用哪个播放器：自动（默认：Apple Music 和网易云哪个在播跟哪个）、只用 Apple Music、只用网易云。
+// 设置里改了以后重启程序生效；环境变量 UTA_PLAYER 优先
+const PLAYERS = { auto, apple: appleMusic, netease };
+const wanted = process.env.UTA_PLAYER || getSettings().player || 'auto';
+const PLAYER = wanted in PLAYERS ? wanted : 'auto';
+const music = PLAYERS[PLAYER];
 
 // 版本信息：电脑上可能有不止一份程序，界面和启动脚本靠它分辨正在运行的是哪一份
 function readVersion() {
@@ -363,7 +368,7 @@ const routes = {
     const s = getSettings();
     send(res, 200, {
       model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY,
-      player: s.player === 'netease' ? 'netease' : 'apple', playerInUse: PLAYER,
+      player: ['apple', 'netease'].includes(s.player) ? s.player : 'auto', playerInUse: PLAYER,
       browser: s.browser || 'auto', browsers: installedBrowsers(), browserInUse: pickBrowser(s.browser),
     });
   },
@@ -372,7 +377,7 @@ const routes = {
     const patch = {};
     if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey.trim();
     if (typeof body.model === 'string' && body.model.trim()) patch.model = body.model.trim();
-    if (body.player === 'apple' || body.player === 'netease') patch.player = body.player;
+    if (['auto', 'apple', 'netease'].includes(body.player)) patch.player = body.player;
     if (typeof body.browser === 'string' && (['auto', 'default'].includes(body.browser) || installedBrowsers().includes(body.browser))) patch.browser = body.browser;
     saveSettings(patch);
     send(res, 200, { ok: true });
@@ -391,10 +396,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method !== 'GET') return send(res, 404, { error: 'not found' });
+  // 随程序带的日文字体（见 fonts.js）：样式表是现改现发的，字体文件按名字去包里取
+  if (url.pathname === '/fonts/noto-sans-jp.css') return send(res, 200, notoCSS(), 'text/css; charset=utf-8');
+  const font = /^\/fonts\/noto-sans-jp\/([^/]+)$/.exec(url.pathname);
+  if (font) {
+    const file = notoFile(font[1]);
+    if (!file) return send(res, 404, 'Not found', 'text/plain');
+    res.writeHead(200, { 'Content-Type': 'font/woff2', 'Cache-Control': 'public, max-age=86400' });
+    return void fs.createReadStream(file).pipe(res);
+  }
   const rel = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
   let file = path.join(PUBLIC, rel === '/' || rel === '\\' ? 'index.html' : rel);
   if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, 'Not found', 'text/plain');
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+  // no-store：界面文件都在本机、很小，不缓存。App 里的系统 WebKit 刷新页面时有时会沿用旧的样式 / 脚本，
+  // 更新后界面没变；不缓存就一定拿到磁盘上的新文件
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
   fs.createReadStream(file).pipe(res);
 });
 

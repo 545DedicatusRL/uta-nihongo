@@ -74,6 +74,8 @@ function onState(s) {
   if (s.focus) return window.focus(); // 点了程序坞图标：程序把浏览器叫到了前面，这里尽量让这个窗口排到最上
   if (s.close) return window.close(); // 界面换到别的浏览器重新打开了：这个窗口自己关掉
   if ('queue' in s) onQueue(s.queue);
+  // 自动模式：现在跟着的是哪个播放器（提示文字里用它的名字）
+  if (s.source && PLAYER.id === 'auto') PLAYER.name = s.source === 'netease' ? '网易云音乐' : 'Apple Music';
   S.player = s;
   const playing = s.state === 'playing';
   app.classList.toggle('playing', playing);
@@ -94,6 +96,8 @@ function onState(s) {
 
 function showIdle(s) {
   if (PLAYER.id === 'netease') return showIdleNetease(s);
+  if (PLAYER.id === 'auto' && !s.running && !s.waiting && !s.errno) return setStatus('在 Apple Music 或网易云音乐里播放一首歌，这里会自动跟上。<br><span class="muted">网易云要由本程序打开才能被读到：在「设置 → 更多设置 → 程序」里选「只用网易云」可以让程序替你打开它。</span>');
+  if (s.source === 'netease') return showIdleNetease(s);
   if (s.waiting) setStatus('正在等待 Apple Music 响应…<br>如果系统弹出了「想要控制 Music」的提示，请点「允许」。<br><span class="muted">也可能是 Music 里有未关闭的对话框。</span>');
   else if (!s.running) setStatus('Apple Music 还没有打开。<br>打开它播放一首歌，或者从左上角的「资料库」里选一首。');
   // 第一次的授权询问被点了「不允许」：系统不会再问第二次，要到系统设置里手动打开。打开后这里会自己恢复，不用重启
@@ -215,6 +219,80 @@ function withGaps(lines) {
   return out;
 }
 
+// ---------------- 背景：从封面取色，几团色块缓慢流动（Apple Music 歌词页那样） ----------------
+// 封面缩成 48×48，按颜色分桶统计；挑最多 5 种彼此差得开的主色（偏灰的权重低一些，不然很多封面挑出来一片灰），
+// 记下各自占多少。每种颜色一团柔和的圆形渐变，占得越多那团越大；最多的那个颜色同时做底色。
+// 色块的漂移、旋转、伸缩全在 CSS 里（只动 transform，交给显卡）；换歌时颜色和大小慢慢过渡过去
+async function albumPalette(url) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = url;
+  await img.decode();
+  const N = 48, c = document.createElement('canvas');
+  c.width = c.height = N;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0, N, N);
+  const px = g.getImageData(0, 0, N, N).data; // 跨域的图在这里会抛错（取不到像素），由调用的地方兜底
+  const buckets = new Map();
+  for (let i = 0; i < px.length; i += 4) {
+    const r = px[i], gg = px[i + 1], b = px[i + 2];
+    const key = (r >> 4) << 8 | (gg >> 4) << 4 | (b >> 4);
+    const e = buckets.get(key) || { r: 0, g: 0, b: 0, n: 0 };
+    e.r += r; e.g += gg; e.b += b; e.n++;
+    buckets.set(key, e);
+  }
+  const total = N * N;
+  const cols = [...buckets.values()].map((e) => {
+    const r = e.r / e.n, gg = e.g / e.n, b = e.b / e.n;
+    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+    const sat = mx ? (mx - mn) / mx : 0;
+    return { r, g: gg, b, share: e.n / total, w: e.n * (0.35 + sat) };
+  }).sort((x, y) => y.w - x.w);
+  const picked = [];
+  for (const col of cols) {
+    if (picked.every((p) => Math.hypot(p.r - col.r, p.g - col.g, p.b - col.b) > 56)) picked.push({ ...col });
+    else { // 和已经挑中的颜色很像：它的份额算到最像的那个头上
+      const near = picked.reduce((a, p) => (Math.hypot(p.r - col.r, p.g - col.g, p.b - col.b) < Math.hypot(a.r - col.r, a.g - col.g, a.b - col.b) ? p : a));
+      near.share += col.share;
+    }
+    if (picked.length >= 5 && cols.indexOf(col) > 80) break;
+  }
+  return picked.slice(0, 5);
+}
+// 太亮的颜色压一压（上面要放白字），太灰的稍微提一点饱和度
+function meshColor({ r, g, b }) {
+  const [h, s, l] = rgbToHsl(r, g, b);
+  return `hsl(${Math.round(h * 360)} ${Math.round(Math.min(1, s * 1.2 + 0.04) * 100)}% ${Math.round(Math.min(l, 0.52) * 100)}%)`;
+}
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+  if (mx === mn) return [0, 0, l];
+  const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h / 6, s, l];
+}
+let meshUrl = '';
+async function paintMesh(url) {
+  if (url === meshUrl) return;
+  meshUrl = url;
+  const mesh = $('#bg-mesh');
+  let pal;
+  try { pal = await albumPalette(url); } catch { pal = null; }
+  if (meshUrl !== url) return; // 这期间又换了歌
+  if (!pal || !pal.length) { mesh.classList.remove('on'); $('#bg').classList.remove('meshed'); return; }
+  while (pal.length < 5) pal.push(pal[pal.length % Math.max(1, pal.length)]); // 颜色少的封面：重复用
+  const blobs = [...mesh.children];
+  mesh.style.setProperty('--base', meshColor(pal[0]));
+  pal.forEach((p, i) => {
+    blobs[i].style.setProperty('--mc', meshColor(p));
+    // 占得越多越大：底下 55vmax，占满再加 70vmax
+    blobs[i].style.setProperty('--s', `${Math.round(55 + Math.min(1, p.share * 2.2) * 70)}vmax`);
+  });
+  mesh.classList.add('on');
+  $('#bg').classList.add('meshed');
+}
+
 // 封面：优先用 Apple Music 里的封面，取不到时用歌词源的封面
 const art = { track: null, status: '', cover: '' };
 function setArt(track, cover) {
@@ -226,6 +304,7 @@ function setArt(track, cover) {
     for (const el of $$('.art-copy')) el.src = url; // KTV 样式里的封面、倒影、远处那两张
     $('#ktv').classList.add('has-art');
     bg.style.backgroundImage = `url("${url}")`; bg.classList.add('on');
+    paintMesh(url);
   };
   const probe = (url, onOK, onFail) => { const p = new Image(); p.onload = () => { show(url); onOK && onOK(); }; p.onerror = () => onFail && onFail(); p.src = url; };
   if (cover) {
@@ -2476,7 +2555,18 @@ $('#btn-menu').addEventListener('click', () => toggleMenu());
 $('#btn-dict').addEventListener('click', () => setMode('dict'));
 $('#btn-edit').addEventListener('click', () => { toggleMenu(false); setMode('edit'); });
 $('#btn-library').addEventListener('click', openLibrary);
-$('#btn-vocab').addEventListener('click', () => { $('#queue').hidden = true; $('#vocab').hidden = false; loadVocab(); });
+// 词汇书按钮和「记词」一样是开关：点一下打开（按钮亮起），再点一下关上
+$('#btn-vocab').addEventListener('click', () => {
+  if (!$('#vocab').hidden) { $('#vocab').hidden = true; return; }
+  $('#queue').hidden = true; $('#vocab').hidden = false; loadVocab();
+});
+// 按钮亮不亮跟着抽屉走：不管是点按钮、点抽屉的 ✕、按快捷键还是被别的抽屉顶掉，都对得上
+// （'uta:toggle' 由下面的 animateHidden 发出：抽屉一开始收起就熄灭，不用等收起的动画放完）
+$('#vocab').addEventListener('uta:toggle', () => {
+  const open = !$('#vocab').hidden;
+  $('#btn-vocab').classList.toggle('on', open);
+  $('#btn-vocab').setAttribute('aria-pressed', open);
+});
 $('#btn-source').addEventListener('click', () => { toggleMenu(false); openSource(); });
 $('#btn-settings').addEventListener('click', () => { toggleMenu(false); openSettings(); });
 $('#btn-offset').addEventListener('click', () => {
@@ -2978,6 +3068,51 @@ function showGuide() {
   startGuide(() => { prefs.guide = 1; savePrefs(); });
 }
 $('#set-guide').addEventListener('click', showGuide);
+
+// ---------------- 弹出 / 收起的动效 ----------------
+// 抽屉、弹窗、菜单、记词栏原来都是直接 hidden = true / false，出现有动画、消失是一下子没了。
+// 这里接管这几个元素的 hidden：设成显示时照常显示（出现的动画写在 CSS 里）；
+// 设成隐藏时先加 .leaving 放收起的动画，放完再真的藏起来。
+// 读 hidden 拿到的是「要变成的样子」，所以别处的 if (!$('#vocab').hidden) 这类判断不受影响
+const HIDDEN = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidden');
+// 布局变化时让元素从旧位置滑到新位置（FLIP）：先记下位置，做改动，再从旧位置弹回新位置
+function flip(els, mutate) {
+  const items = els.map((el) => [el, el.getBoundingClientRect()]).filter(([, r]) => r.width > 0);
+  mutate();
+  if (noMotion.matches) return;
+  for (const [el, a] of items) {
+    const b = el.getBoundingClientRect();
+    if (!b.width) continue;
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (Math.abs(dx) < .5 && Math.abs(dy) < .5) continue;
+    // 用 translate 属性而不是 transform：封面暂停时的缩小用的是 transform，两样叠在一起互不干扰
+    el.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], { duration: 560, easing: 'cubic-bezier(.34, 1.25, .5, 1)' });
+  }
+}
+// 记词栏占着窗口底部的位置：它出现 / 收起时播放器那块变矮 / 变高，封面和歌名会重新居中。让它们滑过去而不是跳过去
+const playerParts = () => ['#art-wrap', '#meta', '#transport'].map((q) => $(q));
+function animateHidden(el, leaveMs, wrap = (f) => f()) {
+  let target = HIDDEN.get.call(el), timer = 0;
+  Object.defineProperty(el, 'hidden', {
+    configurable: true,
+    get: () => target,
+    set(v) {
+      v = !!v;
+      if (v === target) return;
+      target = v;
+      clearTimeout(timer);
+      if (!v) { el.classList.remove('leaving'); wrap(() => HIDDEN.set.call(el, false)); }
+      else if (noMotion.matches || HIDDEN.get.call(el)) HIDDEN.set.call(el, true);
+      else {
+        el.classList.add('leaving');
+        timer = setTimeout(() => { el.classList.remove('leaving'); wrap(() => HIDDEN.set.call(el, true)); }, leaveMs);
+      }
+      el.dispatchEvent(new Event('uta:toggle'));
+    },
+  });
+}
+for (const [sel, ms] of [['#vocab', 280], ['#queue', 280], ['#library', 280], ['#settings-modal', 240], ['#source-modal', 240], ['#menu', 180]]) animateHidden($(sel), ms);
+animateHidden($('#dictbar'), 260, (change) => flip(playerParts(), change));
 
 // ---------------- 启动 ----------------
 applyPrefs();

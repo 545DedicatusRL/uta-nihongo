@@ -62,7 +62,7 @@ function evaluate(expression, timeout = 3000) {
 // ---------- 放进网易云页面里的小助手 ----------
 // 只装一次（页面重新载入后会重装）。snap() 返回当前状态；cmd() 执行控制命令。
 const AGENT = `(() => {
-  if (window.__uta && window.__uta.v === 3) return 'ok';
+  if (window.__uta && window.__uta.v === 4) return 'ok';
   const findStore = () => {
     const root = document.querySelector('#root') || document.body.firstElementChild;
     if (!root) return null;
@@ -78,7 +78,7 @@ const AGENT = `(() => {
   };
   const store = findStore();
   if (!store) return 'no-store';
-  const prog = { id: '', pos: 0, at: 0 };
+  const prog = { id: '', pos: 0, at: 0, seekTo: -1, seekAt: 0 };
   // 客户端底层每隔一小会儿报一次进度，形如 (歌曲ID, "12.07", "1.0000")。
   // 给 window.MNBCallback 赋值不会替换原来的处理，而是登记一个「事后」监听（客户端自己的设计），
   // 每条底层回报都会再交给它一份；这里只认出进度那一种
@@ -86,6 +86,13 @@ const AGENT = `(() => {
     if (!Array.isArray(args) || args.length !== 3) return;
     const [id, pos, rate] = args;
     if (!/^\\d+$/.test(String(id)) || !/^\\d+(\\.\\d+)?$/.test(String(pos)) || !/^\\d+\\.\\d{4}$/.test(String(rate))) return;
+    // 刚拖过进度：底层在真正跳过去之前还会报一两次旧位置。这些旧位置要是报给界面，
+    // 歌词会先滚回原来那句再滚过来（看着像动画重复了一遍），所以离目标太远的先不认，
+    // 直到报来的位置接近目标（或者过了 2.5 秒）
+    if (prog.seekAt) {
+      if (Date.now() - prog.seekAt < 2500 && Math.abs(Number(pos) - prog.seekTo) > 1.5) return;
+      prog.seekAt = 0;
+    }
     prog.id = String(id); prog.pos = Number(pos); prog.at = Date.now();
   };
   // 底部播放栏的按钮（标题形如「暂停（空格）」「下一首（⌘→）」）；只找屏幕上看得见的那个
@@ -95,7 +102,7 @@ const AGENT = `(() => {
   };
   const rid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
   window.__uta = {
-    v: 3,
+    v: 4,
     snap() {
       const pl = store.getState().playing || {};
       const t = pl.curTrack;
@@ -134,7 +141,7 @@ const AGENT = `(() => {
           const to = Math.max(0, Number(a) || 0);
           // 和它自己拖进度条时发给底层的命令一样：audioplayer.seek(歌曲ID, "ID|seek|随机串", 秒数)
           ncmChannelOSX.postMessage({ method: 'call', command: 'audioplayer.seek', params: [id, id + '|seek|' + rid(), to], seq: '::[[native-intf]]::uta-' + rid() });
-          prog.id = id; prog.pos = to; prog.at = Date.now();
+          prog.id = id; prog.pos = to; prog.at = Date.now(); prog.seekTo = to; prog.seekAt = Date.now();
           return null;
         }
         default: throw new Error('网易云模式不支持：' + c);
@@ -148,6 +155,8 @@ const AGENT = `(() => {
 export const player = new EventEmitter();
 player.state = { running: false };
 let timer = null, launching = 0, busy = false;
+// autoLaunch：网易云没开时替用户打开它（只用网易云时）。自动模式下不主动打开，没连上时也少试几次（每 2 秒一次）
+let autoLaunch = true, lastTry = 0;
 
 function emit(s) {
   s.ts = Date.now();
@@ -161,6 +170,8 @@ async function tick() {
   busy = true;
   try {
     if (!ws) {
+      if (!autoLaunch && Date.now() - lastTry < 2000) return;
+      lastTry = Date.now();
       try { await connect(); }
       catch (e) {
         if (e.code === 'node') return emit({ running: false, err: e.message, errno: 'node' });
@@ -168,6 +179,7 @@ async function tick() {
         // 网易云开着、但不是带调试端口启动的：需要用户同意重开一次（界面上有按钮）
         if (up) return emit({ running: false, errno: 'netease-no-port', err: '网易云不是由唱歌学日语启动的' });
         // 网易云没开：替用户带着调试端口把它打开（30 秒内只试一次）
+        if (!autoLaunch) return emit({ running: false });
         if (Date.now() - launching > 30000) { launching = Date.now(); launch(); }
         return emit({ running: false, waiting: true });
       }
@@ -200,7 +212,8 @@ export async function relaunch() {
   launch();
 }
 
-export function startWatcher() {
+export function startWatcher({ launch: canLaunch = true } = {}) {
+  autoLaunch = canLaunch;
   if (timer) return;
   timer = setInterval(tick, 250);
   tick();

@@ -4,7 +4,7 @@
 
 ## 直接下载 Mac App（推荐）
 
-到 [Releases](https://github.com/raaaaaaayx/uta-nihongo/releases/latest) 下载 `uta-nihongo-macOS-arm64.zip`，解压后把「唱歌学日语」拖进「应用程序」文件夹即可。不需要安装 Node.js，也不需要浏览器。
+到 [Releases](https://github.com/545DedicatusRL/uta-nihongo/releases/latest) 下载 `uta-nihongo-macOS-arm64.zip`，解压后把「唱歌学日语」拖进「应用程序」文件夹即可。不需要安装 Node.js，也不需要浏览器。
 
 - 需要 Apple 芯片（M 系列）的 Mac，macOS 12 或更新
 - 第一次打开时 macOS 会提示无法验证开发者：在「应用程序」里 **右键 → 打开**，再点「打开」
@@ -72,7 +72,7 @@ tools/build-app.sh --install
 
 ## 网易云音乐
 
-「设置 → 更多设置 → 程序 → 播放器」选「网易云音乐」后重启。程序会带着调试端口（默认 9222，可用 `UTA_NETEASE_PORT` 改）打开网易云，从它的界面读取当前歌曲和进度，歌词按网易云的歌曲 ID 直接取。这个模式下没有资料库和播放列表，在网易云里选歌即可。
+默认是「自动」：Apple Music 和网易云音乐哪个在播就显示哪个的歌词（「设置 → 更多设置 → 程序 → 播放器」里也可以只用其中一个）。网易云要由本程序打开才能被读到：选「只用网易云」时程序会替你打开它，自动模式下如果网易云不是由本程序打开的，界面上会出现「重新打开网易云」的按钮。网易云带着调试端口（默认 9222，可用 `UTA_NETEASE_PORT` 改）打开后，从它的界面读取当前歌曲和进度，歌词按网易云的歌曲 ID 直接取。只用网易云时没有资料库和播放列表，在网易云里选歌即可。
 
 ## 更新
 
