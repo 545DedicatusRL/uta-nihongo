@@ -769,6 +769,9 @@ input, select, textarea { accent-color: var(--accent); caret-color: var(--accent
 .chip.off { box-shadow: inset 0 0 0 1px var(--fg-4); background: none; }
 .line { border-radius: var(--r-md); }
 .line:hover { background: rgba(255, 255, 255, .07); }
+/* 鼠标指着的那行不虚化：Mac App（WebKit）里一行带着模糊滤镜又有圆角底色时，滤镜图层的上沿偶尔会画出一条
+   紫色的细线（显卡里没清干净的一行像素）。指着的这行本来也该看清楚，去掉滤镜一举两得 */
+#scroll .line:hover { filter: none; }
 
 /* ---------- 通用按钮：胶囊 ---------- */
 .btn { padding: 7px 16px; border-radius: 999px; border: 0; background: var(--lg-fill-2); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), inset 0 0 0 .5px rgba(255, 255, 255, .12); font-weight: 500; transition: background .2s, transform .2s cubic-bezier(.3, .75, .2, 1); }
