@@ -284,11 +284,17 @@ async function paintMesh(url) {
   while (pal.length < 5) pal.push(pal[pal.length % Math.max(1, pal.length)]); // 颜色少的封面：重复用
   const blobs = [...mesh.children];
   mesh.style.setProperty('--base', meshColor(pal[0]));
-  pal.forEach((p, i) => {
+  // 最多的颜色已经是底色：色块从第二多的颜色排起，它自己放到最后一团（上边那团）
+  [...pal.slice(1), pal[0]].forEach((p, i) => {
     blobs[i].style.setProperty('--mc', meshColor(p));
-    // 占得越多越大：底下 55vmax，占满再加 70vmax
-    blobs[i].style.setProperty('--s', `${Math.round(55 + Math.min(1, p.share * 2.2) * 70)}vmax`);
+    // 占得越多越大：48vmax 起，最大 80vmax（最多的颜色已经是底色，色块不用铺满）
+    blobs[i].style.setProperty('--s', `${Math.round(48 + Math.min(1, p.share * 2) * 32)}vmax`);
   });
+  // 第一次上色时，每团从自己路线上随机的一点开始，免得每次打开都是同一个样子
+  if (!mesh.dataset.seeded) {
+    mesh.dataset.seeded = '1';
+    blobs.forEach((b) => { b.style.animationDelay = `${-Math.round(Math.random() * 60)}s`; });
+  }
   mesh.classList.add('on');
   $('#bg').classList.add('meshed');
 }
