@@ -756,7 +756,7 @@ input, select, textarea { accent-color: var(--accent); caret-color: var(--accent
 #progress::before { background: rgba(255, 255, 255, .22); }
 #progress-fill { border-radius: 999px; background: rgba(255, 255, 255, .9); }
 #progress:hover::before, #progress:hover #progress-clip { height: 8px; transition: height .2s; }
-#src-badge { border-radius: 999px; padding: 1px 9px; background: var(--lg-fill); }
+#src-badge { border-radius: 6px; padding: 1px 9px; background: var(--lg-fill); } /* 小圆角的方块，不做成胶囊：和 Apple Music 里「Hi-Res Lossless」那个标记一个样子 */
 #controls button:hover { background: var(--lg-fill); }
 :is(.view-focus, .view-ktv) #art-wrap { border-radius: 8px; }
 
@@ -976,8 +976,8 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   background-repeat: no-repeat; background-position: right 12px center; background-size: 11px auto; padding-right: 32px; }
 /* 抽屉从顶栏下面开始：玻璃是透明的，压在顶栏按钮上会和标题叠在一起 */
 .drawer, .mac-app .drawer.left { top: 62px; }
-/* 设置 / 歌词来源：字多，玻璃比抽屉稍深一点 */
-.modal-card { background-color: rgba(22, 20, 32, .42); }
+/* 设置 / 歌词来源：字多、字小，底色要深到后面的歌词不干扰阅读（.42 时大字歌词透上来，和设置项叠在一起看不清） */
+.modal-card { background-color: rgba(22, 20, 32, .84); }
 
 /* ---------- 不要白色描边：去掉玻璃边缘那一圈白线，只留透明、模糊和表面的反光 ---------- */
 :root { --lg-edge: inset 0 0 24px rgba(255, 255, 255, .05); }

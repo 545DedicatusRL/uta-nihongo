@@ -168,6 +168,13 @@ async function jisho(word) {
       || cands.filter((d) => basic(d) > basic(pick)).sort((x, y) => basic(y) - basic(x))[0];
     if (alt) pick = alt;
   }
+  // 排第一的那条有汉字写法、而且不常用，同音词里却有一条「根本没有汉字写法」的常用词：歌词里写假名的多半是后者。
+  // ほら：排第一的是「法螺」（吹牛 / 海螺，不常用，只是标了「通常写假名」所以上面那一步不换），
+  // 其实是感叹词 ほら（看、瞧）。没有汉字写法的词条不会进下面的同音词名单，这里不换的话界面上连改选都选不到
+  if (kana && pick.japanese[0].word && !pick.is_common) {
+    const plain = exact.find((d) => d !== pick && head(d) && d.is_common && !d.japanese[0].word);
+    if (plain) pick = plain;
+  }
   const entry = (d) => {
     const jp = d.japanese.find((x) => x.word === word) || d.japanese[0];
     const levels = (d.jlpt || []).map((s) => Number(s.replace(/\D/g, ''))).filter(Boolean);
@@ -221,7 +228,10 @@ async function jisho(word) {
 
 // ---- 按读音选词条 ----
 const CV = 3; // 缓存里带了这个标记的条目，才保证已经把「其他读音的词条」一起存下来了
-const KV = 1; // 假名写的词：带了这个标记的条目，才是按「通常只写假名」挑过、并且存了同音词条的
+const KV = 2; // 假名写的词：带了这个标记的条目，才是按「通常只写假名」挑过、并且存了同音词条的
+// 2 比 1 多了一条规则（不常用的汉字词让位给没有汉字写法的常用词，见 jisho）。旧的 1 里只有「选中的是不常用的汉字词」
+// 那些可能受影响，只重查它们，其余的照旧用，不必把所有假名词都重查一遍
+const kanaFresh = (e) => e.kv === KV || (e.kv === 1 && (e.common || !hasKanji(e.w || '')));
 // 词条的读音和提示对不对得上：2 = 完全一样，1 = 以它开头（提示只有词干那一段），0 = 对不上
 const fitRank = (r, h) => { const x = toHira(r); return !x || !h ? 0 : x === h ? 2 : x.startsWith(h) ? 1 : 0; };
 function select(e, h) {
@@ -240,7 +250,7 @@ function select(e, h) {
 // 这条缓存要不要重新查：没有中文释义那一步的旧缓存；或者是带着读音提示来查、缓存却还是旧格式
 // （旧格式只存了一个词条，同一个写法的其他读音没存下来）。每个词只会重查这一次。
 // 假名写的词还要看 KV（见上）。
-const stale = (e, h, w) => e.zhs === undefined || (!e.miss && ((!!h && e.cv !== CV) || (!!w && !hasKanji(w) && e.kv !== KV)));
+const stale = (e, h, w) => e.zhs === undefined || (!e.miss && ((!!h && e.cv !== CV) || (!!w && !hasKanji(w) && !kanaFresh(e))));
 
 // 人称代词在词典里排在前面的是同形的另一个义项（僕＝仆人、君＝君主）；那些义项本身没错，
 // 但歌词里几乎总是代词，所以这里直接给出代词义

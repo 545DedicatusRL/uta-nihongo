@@ -2554,7 +2554,8 @@ function toggleMenu(open = $('#menu').hidden) {
 $('#btn-menu').addEventListener('click', () => toggleMenu());
 $('#btn-dict').addEventListener('click', () => setMode('dict'));
 $('#btn-edit').addEventListener('click', () => { toggleMenu(false); setMode('edit'); });
-$('#btn-library').addEventListener('click', openLibrary);
+// 资料库按钮是开关：开着的时候再点一下收起（和词汇书按钮一样）
+$('#btn-library').addEventListener('click', () => { if ($('#library').hidden) openLibrary(); else $('#library').hidden = true; });
 // 词汇书按钮和「记词」一样是开关：点一下打开（按钮亮起），再点一下关上
 $('#btn-vocab').addEventListener('click', () => {
   if (!$('#vocab').hidden) { $('#vocab').hidden = true; return; }
