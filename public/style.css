@@ -170,6 +170,9 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .line .zh { font-size: clamp(13px, 1.25vw, 17px); margin-top: 2px; font-weight: 500; opacity: .85; }
 .line .roma { font-size: clamp(11px, 1vw, 14px); letter-spacing: .04em; opacity: .7; }
 .line.active { color: var(--fg); transform: none; }
+/* 当前句（和同组亮着的句子）不虚化，滤镜直接拿掉，不留一个 blur(0)：Mac App（WebKit）里带滤镜的图层边上
+   偶尔会画出一条紫色的细线（显卡里没清干净的一行像素），正落在当前句的下沿。没有滤镜就没有这个图层 */
+.line.active, .line.co { filter: none; }
 .line.active .ann { animation: ann-in .5s .12s cubic-bezier(.2, .8, .2, 1) backwards; }
 @keyframes ann-in { from { opacity: 0; transform: translateY(6px); } }
 /* 修改模式：当前句前后各两句也列出标注（稍暗一点，当前句仍然最显眼）；收起时原地淡出，不再占位置 */
