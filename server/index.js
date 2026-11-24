@@ -14,6 +14,7 @@ import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
 import { createQueue } from './queue.js';
 import { showUI, installedBrowsers, pickBrowser } from './window.js';
+import { notoCSS, notoFile } from './fonts.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError, resetDictCache } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
@@ -376,6 +377,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method !== 'GET') return send(res, 404, { error: 'not found' });
+  // 随程序带的日文字体（见 fonts.js）：样式表是现改现发的，字体文件按名字去包里取
+  if (url.pathname === '/fonts/noto-sans-jp.css') return send(res, 200, notoCSS(), 'text/css; charset=utf-8');
+  const font = /^\/fonts\/noto-sans-jp\/([^/]+)$/.exec(url.pathname);
+  if (font) {
+    const file = notoFile(font[1]);
+    if (!file) return send(res, 404, 'Not found', 'text/plain');
+    res.writeHead(200, { 'Content-Type': 'font/woff2', 'Cache-Control': 'public, max-age=86400' });
+    return void fs.createReadStream(file).pipe(res);
+  }
   const rel = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
   let file = path.join(PUBLIC, rel === '/' || rel === '\\' ? 'index.html' : rel);
   if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, 'Not found', 'text/plain');
