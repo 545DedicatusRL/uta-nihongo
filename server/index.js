@@ -8,7 +8,6 @@ import {
   ROOT, getSettings, saveSettings, getSongMeta, saveSongMeta,
   getUserDict, saveUserDict, getVocab, saveVocab, getMarks, saveMarks, readJSON, writeJSON, dataPath,
 } from './store.js';
-import * as music from './music.js';
 import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
 import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
@@ -17,6 +16,19 @@ import { showUI, installedBrowsers, pickBrowser } from './window.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError, resetDictCache } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
+
+// 用哪个播放器。每个播放器是一个模块，接口都一样（NAME / caps / player / control / getArtwork …）：
+//   apple   Apple Music（macOS，music.js）
+//   netease 网易云音乐（Windows 客户端，netease-win.js）
+//   qq      QQ 音乐（Windows，走系统媒体接口，smtc.js）
+// 设置里改了以后重启程序生效；环境变量 UTA_PLAYER 优先。只载入选中的那一个。
+const PLAYERS = process.platform === 'darwin'
+  ? { apple: './music.js' }
+  : process.platform === 'win32' ? { netease: './netease-win.js', qq: './smtc.js' } : {};
+const wantPlayer = process.env.UTA_PLAYER || getSettings().player;
+const PLAYER = PLAYERS[wantPlayer] ? wantPlayer : Object.keys(PLAYERS)[0];
+if (!PLAYER) { console.error('这个程序目前只支持 macOS（Apple Music）和 Windows（网易云音乐 / QQ 音乐）。'); process.exit(1); }
+const music = await import(PLAYERS[PLAYER]);
 
 // 版本信息：电脑上可能有不止一份程序，界面和启动脚本靠它分辨正在运行的是哪一份
 function readVersion() {
@@ -82,6 +94,17 @@ async function loadSong(track, { refresh = false } = {}) {
   try {
     if (!cand || refresh) {
       const cands = await findCandidates(track);
+      // 知道正在播的这首在网易云里的 ID（网易云模式）：直接用它的歌词，不靠搜索去猜
+      if (track.neteaseId) {
+        const exact = cands.find((c) => c.source === 'netease' && c.id === track.neteaseId);
+        if (exact) exact.score = 999;
+        else cands.unshift({ source: 'netease', id: track.neteaseId, title: track.name, alias: [], artists: track.artist ? track.artist.split(' / ') : [], album: track.album || '', duration: track.duration || 0, cover: '', score: 999 });
+      }
+      // 正在用的播放器自己就是歌词来源之一（QQ 音乐模式）：同样的分数下优先用它家的条目
+      if (music.prefer) {
+        for (const c of cands) if (c.source === music.prefer) c.score += 3;
+        cands.sort((a, b) => b.score - a.score);
+      }
       const best = await pickBest(cands);
       if (best) { cand = { ...slimCand(best), auto: true }; saveSongMeta(key, { source: cand }); }
       else cand = null;
@@ -132,6 +155,21 @@ function cacheFiles() {
   return out.flatMap((file) => { try { const st = fs.statSync(file); return st.isFile() ? [{ file, size: st.size }] : []; } catch { return []; } });
 }
 
+// 歌词来源（网易云 / QQ）那一条自带封面地址：播放器自己拿不到封面时用它，下载一次存在 data/artwork 里
+async function sourceCover(pid) {
+  const url = pid && getSongMeta(pid).source?.cover;
+  if (!url) return null;
+  const file = dataPath('artwork', `${pid.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)}.src.jpg`);
+  try {
+    if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return null;
+      fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()));
+    }
+    return { file, type: 'image/jpeg' };
+  } catch { return null; }
+}
+
 const sseClients = new Set();
 // 其中由程序自己打开的界面窗口（地址带 ?app=1）。别的页面（比如另外在浏览器里手动打开的）不算，
 // 否则窗口明明关了，程序还以为它开着
@@ -166,7 +204,9 @@ const routes = {
   'GET /api/artwork': async (req, res, q) => {
     // 调试时（UTA_NO_MUSIC）当前曲目是假的，没有封面可取；按编号取资料库里的封面只是读，不受影响
     if (process.env.UTA_NO_MUSIC && q.has('current')) return send(res, 404, { error: 'no music' });
-    const art = q.has('thumb') ? await music.getThumb(q.get('pid') || '') : await music.getArtwork(q.get('pid') || '', q.has('current'));
+    const pid = q.get('pid') || '';
+    let art = q.has('thumb') ? await music.getThumb(pid) : await music.getArtwork(pid, q.has('current'));
+    if (!art) art = await sourceCover(pid); // 播放器给不出封面：用歌词来源那边的封面
     if (!art) return send(res, 404, { error: 'no artwork' });
     res.writeHead(200, { 'Content-Type': art.type, 'Cache-Control': 'max-age=86400' });
     fs.createReadStream(art.file).pipe(res);
@@ -202,6 +242,7 @@ const routes = {
   // 播放队列
   'GET /api/queue': (req, res, q) => send(res, 200, queue.view(Math.min(Number(q.get('n')) || 150, 5000))),
   'POST /api/queue/play': async (req, res) => {
+    if (!music.caps.queue) return send(res, 400, { error: `${music.NAME}模式下不能从这里点歌，请在${music.NAME}里选歌` });
     const ok = await queue.playList(await readBody(req));
     send(res, ok ? 200 : 400, ok ? queue.summary() : { error: '这份列表里没有能播放的歌' });
   },
@@ -214,6 +255,8 @@ const routes = {
 
   'GET /api/song': async (req, res, q) => {
     const track = { pid: q.get('pid') || '', name: q.get('name') || '', artist: q.get('artist') || '', album: q.get('album') || '', duration: Number(q.get('duration')) || 0 };
+    const ne = /^ne-(\d+)$/.exec(track.pid);
+    if (ne) track.neteaseId = ne[1];
     send(res, 200, await loadSong(track, { refresh: q.has('refresh') }));
   },
   'GET /api/candidates': async (req, res, q) => {
@@ -318,7 +361,7 @@ const routes = {
     res.end('﻿' + rows.join('\n'));
   },
 
-  'GET /api/info': (req, res) => send(res, 200, { root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size, windows: appClients.size }),
+  'GET /api/info': (req, res) => send(res, 200, { player: PLAYER, playerName: music.NAME, caps: music.caps, players: Object.keys(PLAYERS), platform: process.platform, root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size, windows: appClients.size }),
   // 更新代码后原地重启：退出并让启动脚本重新拉起。不是由启动脚本启动的（如 npm start）则只会退出。
   'POST /api/restart': (req, res) => {
     send(res, 200, { ok: true });
@@ -332,6 +375,7 @@ const routes = {
   },
   // 打开「系统设置 → 隐私与安全性 → 自动化」（第一次的授权询问被点了「不允许」之后，只能到这里手动打开）
   'POST /api/open-privacy': (req, res) => {
+    if (process.platform !== 'darwin') return send(res, 400, { error: '只有 macOS 需要这一步' });
     execFile('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_Automation'], () => {});
     send(res, 200, { ok: true });
   },
@@ -350,6 +394,7 @@ const routes = {
     const s = getSettings();
     send(res, 200, {
       model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY,
+      player: PLAYERS[s.player] ? s.player : PLAYER, playerInUse: PLAYER, players: Object.keys(PLAYERS),
       browser: s.browser || 'auto', browsers: installedBrowsers(), browserInUse: pickBrowser(s.browser),
     });
   },
@@ -358,6 +403,7 @@ const routes = {
     const patch = {};
     if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey.trim();
     if (typeof body.model === 'string' && body.model.trim()) patch.model = body.model.trim();
+    if (typeof body.player === 'string' && PLAYERS[body.player]) patch.player = body.player;
     if (typeof body.browser === 'string' && (['auto', 'default'].includes(body.browser) || installedBrowsers().includes(body.browser))) patch.browser = body.browser;
     saveSettings(patch);
     send(res, 200, { ok: true });
@@ -384,9 +430,10 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`唱歌学日语 已启动： http://localhost:${PORT}`);
-  if (!process.env.UTA_NO_MUSIC) music.startWatcher(); // UTA_NO_MUSIC=1：不连接 Apple Music（调试界面用）
-  if (!process.env.UTA_NO_MUSIC && !process.env.UTA_NO_SHORTCUT) {
+  console.log(`唱歌学日语 已启动： http://localhost:${PORT}（播放器：${music.NAME}）`);
+  if (!process.env.UTA_NO_MUSIC) music.startWatcher(); // UTA_NO_MUSIC=1：不连接播放器（调试界面用）
+  // 桌面图标目前只有 macOS 的做法（shortcut.js 生成的是 .app）
+  if (process.platform === 'darwin' && !process.env.UTA_NO_MUSIC && !process.env.UTA_NO_SHORTCUT) {
     ensureDesktopShortcut()
       .then((r) => {
         if (r === 'created') console.log('已在桌面创建「唱歌学日语」图标，以后双击它即可启动（不会再打开终端）。');
@@ -395,5 +442,12 @@ server.listen(PORT, '127.0.0.1', () => {
       .catch((e) => console.error('桌面快捷方式创建失败（下次启动会重试）：', e.message));
   }
   getTokenizer().catch((e) => console.error('词典加载失败：', e.message));
+  // UTA_OPEN=1（Windows 的启动脚本用）：起来以后自己把界面打开。等一小会儿再看：
+  // 如果是原地重启，原来的界面窗口会自己连回来，那就不用再开一个
+  if (process.env.UTA_OPEN) {
+    setTimeout(() => {
+      if (!appClients.size) showUI({ url: `http://localhost:${PORT}`, setting: getSettings().browser, hasWindow: false }).catch(() => {});
+    }, 2500);
+  }
 });
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { music.stopWatcher(); process.exit(0); });

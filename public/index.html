@@ -253,7 +253,7 @@
       </div>
 
       <h3>说明</h3>
-      <p class="muted">播放由本机的 Apple Music 完成，本程序只读取资料库和播放进度。歌词来自网易云音乐 / QQ 音乐；假名由本地词库（kuromoji）标注，并用歌词源自带的罗马音自动纠正。词汇书、读音修正、时间偏移都保存在程序目录的 data 文件夹里。</p>
+      <p class="muted">播放由本机的 <span class="player-name">Apple Music</span> 完成，本程序只读取它的资料库和播放进度。歌词来自网易云音乐 / QQ 音乐；假名由本地词库（kuromoji）标注，并用歌词源自带的罗马音自动纠正。词汇书、读音修正、时间偏移都保存在程序目录的 data 文件夹里。</p>
       <p class="muted" id="about-version"></p>
       <div class="form-row"><span>使用指引</span><button class="btn" id="set-guide">再看一遍</button></div>
 
@@ -262,11 +262,13 @@
       <div class="marks set-lib" id="set-marks" hidden></div>
 
       <h3>程序</h3>
+      <div class="form-row set-player" hidden><span>播放器</span><select id="set-player"></select><button class="btn small" id="set-player-apply" hidden>现在重启</button></div>
+      <p class="muted set-player" hidden>网易云音乐：歌词按歌曲直接对上，能拖动进度；第一次用时程序会重新打开一次网易云（带上读取进度用的调试端口），需要 3.0 或更新的版本。QQ 音乐：要在 QQ 音乐的「设置 → 常规设置 → 通知」里打开「显示系统媒体传输控件（SMTC）」，不能从这里拖动进度。两个都没有资料库和播放列表，在播放器里选歌。</p>
       <div class="form-row"><span>界面窗口</span><select id="set-browser"></select><button class="btn small" id="set-browser-apply" hidden>现在就换</button></div>
       <p class="muted">Chrome、Edge 这类浏览器能把界面开成独立窗口（没有地址栏和标签页）；系统默认浏览器只能当普通标签页打开。</p>
       <div class="form-row"><span>缓存</span><button class="btn" id="set-cache">清除缓存</button><span class="muted" id="set-cache-info"></span></div>
       <p class="muted">缓存是歌词、封面和词典查询的结果，清掉后用到时会重新下载。词汇书、读音修正、时间对齐、设置和 AI 讲解不受影响。</p>
-      <div class="form-row"><span>退出</span><button class="btn" id="set-quit">退出唱歌学日语</button><span class="muted">程序在后台运行，关掉界面窗口不会退出；Apple Music 不受影响。</span></div>
+      <div class="form-row"><span>退出</span><button class="btn" id="set-quit">退出唱歌学日语</button><span class="muted">程序在后台运行，关掉界面窗口不会退出；<span class="player-name">Apple Music</span> 不受影响。</span></div>
     </div>
   </div>
 </div>

@@ -54,6 +54,31 @@ curl -fsSL https://raw.githubusercontent.com/545DedicatusRL/uta-nihongo/main/ins
 - **时间对齐**：`[` / `]` 微调，或在「对齐」里开启敲击对齐。偏移按歌曲保存。
 - **自定义与修改**: 由于歌曲中汉字的读音多样，虽然内置功能会自动修复读音，但有时仍会标注错误读音。对于错误的读音，可以在编辑模式中对假名自行更改。同时，对于有多个注释的词语，有时候会出现标注错误的情况，系统默认自动校正，如遇校正后仍错误的情况，在编辑模式也可以选择其他的注释。修改模式也可以选择注释不做选择。
 - 
+## Windows（网易云音乐 / QQ 音乐）
+
+Windows 上没有 Apple Music 的脚本接口，改为配合网易云音乐或 QQ 音乐的电脑客户端使用：在客户端里选歌播放，这里显示歌词。需要 Windows 10 / 11、[Node.js](https://nodejs.org) 22 或更新的版本。
+
+```
+git clone https://github.com/545DedicatusRL/uta-nihongo.git
+```
+
+然后双击文件夹里的 `唱歌学日语.cmd`。界面用 Edge（系统自带）或 Chrome 开成独立窗口；关掉那个黑色的命令行窗口就是退出。
+
+播放器在「设置 → 更多设置 → 程序 → 播放器」里选，换了以后点「现在重启」：
+
+| | 网易云音乐（默认） | QQ 音乐 |
+|---|---|---|
+| 客户端版本 | 3.0 或更新 | 21.10 或更新 |
+| 要做的准备 | 第一次使用时，程序会把网易云重新打开一次 | 在 QQ 音乐里打开「设置 → 常规设置 → 通知 → 显示系统媒体传输控件（SMTC）」 |
+| 歌词匹配 | 按网易云的歌曲 ID 直接取 | 按歌名、歌手、时长搜索 |
+| 播放 / 暂停 / 上下首 | 可以 | 可以 |
+| 点歌词跳转、拖进度 | 可以 | 不行，要在 QQ 音乐里拖 |
+| 资料库、播放列表 | 没有，在客户端里选歌 | 没有，在客户端里选歌 |
+
+- **网易云音乐**：程序带着调试端口（只对本机开放，默认 9222，可用环境变量 `UTA_NETEASE_PORT` 改）启动网易云，从它的界面读取当前歌曲和进度，不改动网易云的任何文件。网易云要是已经开着，界面上会出现「重新打开网易云」的按钮；之后只要是从本程序打开的网易云就能直接连上。装在不常见的位置时用 `UTA_NETEASE_EXE` 指定 `cloudmusic.exe` 的路径。
+- **QQ 音乐**：通过 Windows 的系统媒体接口读取歌名和进度，由一个系统自带的 PowerShell 小助手（`server/smtc-helper.ps1`）完成，不用另外装东西。
+- 桌面图标、一键安装脚本、「全部专辑」等和资料库有关的功能目前只有 macOS 版有。
+
 ## 更新
 
 运行：
@@ -70,7 +95,7 @@ tools/update-local.sh
 
 ## 目录
 
-- `server/` — 本地服务：`music.js`（Apple Music 桥接）、`lyrics.js`（歌词源）、`japanese.js`（分词 / 注音 / 纠错）、`grammar.js`（语法规则）、`annotate.js`（Jisho / Claude）
+- `server/` — 本地服务：`music.js`（Apple Music 桥接）、`netease-win.js`（网易云音乐 Windows 客户端桥接）、`smtc.js` + `smtc-helper.ps1`（QQ 音乐桥接）、`lyrics.js`（歌词源）、`japanese.js`（分词 / 注音 / 纠错）、`grammar.js`（语法规则）、`annotate.js`（Jisho / Claude）
 - `public/` — 界面
 
 ## 致谢
@@ -79,7 +104,7 @@ tools/update-local.sh
 
 ## 说明
 
-- 仅支持 macOS（通过 Music 的脚本接口控制播放），需要 Node.js 18+。
+- macOS：通过 Music 的脚本接口控制播放，需要 Node.js 18+。Windows：配合网易云音乐或 QQ 音乐的客户端，需要 Node.js 22+，见上面的「Windows」一节。
 - 歌词与词典数据来自第三方服务（网易云音乐、QQ 音乐、有道词典、Jisho）的非官方接口，仅供个人学习使用；歌词版权归原权利人所有，本仓库不包含任何歌词内容。
 
 ## 许可证
