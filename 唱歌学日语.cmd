@@ -11,8 +11,12 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist node_modules (
-  echo 第一次运行，正在安装依赖（要一两分钟）…
+rem 第一次运行，或者更新后多了新的依赖（随程序带的日文字体）：装一次
+set NEED_INSTALL=
+if not exist node_modules set NEED_INSTALL=1
+if not exist "node_modules\@fontsource-variable\noto-sans-jp" set NEED_INSTALL=1
+if defined NEED_INSTALL (
+  echo 正在安装依赖（第一次运行或更新后需要，要一两分钟）…
   call npm install --omit=dev --no-audit --no-fund --loglevel=error
   if errorlevel 1 (
     echo 依赖安装失败，多半是网络问题，请再运行一次。

@@ -12,8 +12,24 @@
   --warn: #ffd479;
   --accent: #ff7a9a;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-  --font-ja: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans CJK JP", -apple-system, sans-serif;
+  /* 日文那几行（歌词、注音、词条）：假名、汉字、日文标点用日文字体，英文字母和数字用系统的英文字体（Mac 上是 SF）。
+     只把日文字体排在前面是做不到的——日文字体自己也带一套英文字形（Hiragino 的偏宽、偏硬，同一句英文比 SF 宽两成），
+     排在前面英文就归它了。所以前两个是「只管日文那些字」的字体（见下面的 Uta JP、server/fonts.js 的 Uta Noto JP），
+     英文字母不归它们管，自然落到后面的系统字体上：
+       Uta JP        本机的 Hiragino（Mac）
+       Uta Noto JP   随程序带的 Noto Sans JP（没有 Hiragino 的系统，Windows 等）
+       system-ui …   英文、数字（Mac 上是 SF，Windows 上是 Segoe UI）
+     再往后是兜底的 */
+  --font-ja: "Uta JP", "Uta Noto JP", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans CJK JP", sans-serif;
 }
+/* Uta JP = 本机的 Hiragino Sans，但只认日文那些字：日文标点（省略号、破折号、弯引号也算，日文里它们要居中、占一格）、
+   符号、假名、汉字、全角字符。Hiragino 的粗细是 W3–W8 六个单独的字体，和 300–800 一一对应（实测过，和直接写 Hiragino Sans 逐像素一样） */
+@font-face { font-family: "Uta JP"; font-weight: 300; src: local("HiraginoSans-W3"), local("Hiragino Sans W3"); unicode-range: U+2010-205E, U+2100-27BF, U+3000-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F; }
+@font-face { font-family: "Uta JP"; font-weight: 400; src: local("HiraginoSans-W4"), local("Hiragino Sans W4"); unicode-range: U+2010-205E, U+2100-27BF, U+3000-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F; }
+@font-face { font-family: "Uta JP"; font-weight: 500; src: local("HiraginoSans-W5"), local("Hiragino Sans W5"); unicode-range: U+2010-205E, U+2100-27BF, U+3000-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F; }
+@font-face { font-family: "Uta JP"; font-weight: 600; src: local("HiraginoSans-W6"), local("Hiragino Sans W6"); unicode-range: U+2010-205E, U+2100-27BF, U+3000-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F; }
+@font-face { font-family: "Uta JP"; font-weight: 700; src: local("HiraginoSans-W7"), local("Hiragino Sans W7"); unicode-range: U+2010-205E, U+2100-27BF, U+3000-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F; }
+@font-face { font-family: "Uta JP"; font-weight: 800; src: local("HiraginoSans-W8"), local("Hiragino Sans W8"); unicode-range: U+2010-205E, U+2100-27BF, U+3000-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-2FA1F; }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body { background: #1d1a26; color: var(--fg); font: 14px/1.5 var(--font); overflow: hidden; -webkit-font-smoothing: antialiased; }
