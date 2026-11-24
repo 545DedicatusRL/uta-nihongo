@@ -246,7 +246,7 @@ async function albumPalette(url) {
     const r = e.r / e.n, gg = e.g / e.n, b = e.b / e.n;
     const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
     const sat = mx ? (mx - mn) / mx : 0;
-    return { r, g: gg, b, share: e.n / total, w: e.n * (0.35 + sat) };
+    return { r, g: gg, b, share: e.n / total, w: e.n * (0.12 + sat * 1.6) }; // 有颜色的比白 / 灰优先：白底封面上那一块蓝才是它的主色调
   }).sort((x, y) => y.w - x.w);
   const picked = [];
   for (const col of cols) {
@@ -259,10 +259,14 @@ async function albumPalette(url) {
   }
   return picked.slice(0, 5);
 }
-// 太亮的颜色压一压（上面要放白字），太灰的稍微提一点饱和度
+// 太亮的颜色压暗（上面要放白字），色相不变。
+// 饱和度不能直接用 HSL 的 s：很亮的颜色哪怕只带一丁点色偏，s 也会算得很高（比如白里透一点青，s 有 36%），
+// 压暗之后就成了一片鲜绿。所以按「彩度」（最大和最小通道差多少）来定：近乎白 / 灰的颜色压暗后还是灰的
 function meshColor({ r, g, b }) {
-  const [h, s, l] = rgbToHsl(r, g, b);
-  return `hsl(${Math.round(h * 360)} ${Math.round(Math.min(1, s * 1.2 + 0.04) * 100)}% ${Math.round(Math.min(l, 0.52) * 100)}%)`;
+  const [h, , l] = rgbToHsl(r, g, b);
+  const chroma = (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+  const s = Math.min(0.85, chroma * 1.5);
+  return `hsl(${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(Math.min(l, 0.5) * 100)}%)`;
 }
 function rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255;
@@ -283,12 +287,21 @@ async function paintMesh(url) {
   if (!pal || !pal.length) { mesh.classList.remove('on'); $('#bg').classList.remove('meshed'); return; }
   while (pal.length < 5) pal.push(pal[pal.length % Math.max(1, pal.length)]); // 颜色少的封面：重复用
   const blobs = [...mesh.children];
-  mesh.style.setProperty('--base', meshColor(pal[0]));
-  pal.forEach((p, i) => {
+  // 底色：占得多、又有颜色的那个（白底 / 灰底的封面，底色取上面那块主要的颜色，不取白和灰）
+  const chroma = (p) => (Math.max(p.r, p.g, p.b) - Math.min(p.r, p.g, p.b)) / 255;
+  const base = pal.reduce((a, p) => (p.share * (0.06 + chroma(p)) > a.share * (0.06 + chroma(a)) ? p : a));
+  mesh.style.setProperty('--base', meshColor(base));
+  // 色块从其余的颜色排起，底色自己放到最后一团（上边那团）
+  [...pal.slice(0, pal.indexOf(base)), ...pal.slice(pal.indexOf(base) + 1), base].forEach((p, i) => {
     blobs[i].style.setProperty('--mc', meshColor(p));
-    // 占得越多越大：底下 55vmax，占满再加 70vmax
-    blobs[i].style.setProperty('--s', `${Math.round(55 + Math.min(1, p.share * 2.2) * 70)}vmax`);
+    // 占得越多越大：48vmax 起，最大 80vmax（最多的颜色已经是底色，色块不用铺满）
+    blobs[i].style.setProperty('--s', `${Math.round(48 + Math.min(1, p.share * 2) * 32)}vmax`);
   });
+  // 第一次上色时，每团从自己路线上随机的一点开始，免得每次打开都是同一个样子
+  if (!mesh.dataset.seeded) {
+    mesh.dataset.seeded = '1';
+    blobs.forEach((b) => { b.style.animationDelay = `${-Math.round(Math.random() * 60)}s`; });
+  }
   mesh.classList.add('on');
   $('#bg').classList.add('meshed');
 }
@@ -549,9 +562,21 @@ function jpHTML(line, li) {
       const cls = `seg${isK ? ' k' : ''}${whole ? ' fu' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
       inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}${parts ? `<rt class="rks">${rks}</rt>` : `<rt>${esc(seg.r)}</rt>`}</ruby>` : chars}</span>`;
     });
-    html += `<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
+    html += `${ti && phraseStart(line.tokens, ti) ? '<wbr>' : ''}<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
   });
   return html;
+}
+// 长句折行只在「文节」之间断：样式里不许在日文字之间随便断（word-break: keep-all），这里在每个文节开头放一个 <wbr>，
+// 浏览器只能在这些地方换行，再配上 text-wrap: balance 把两行排得差不多长——不会把「…だったらい / い」这样拆开。
+// 文节 = 一个实词（名词、动词、形容词、副词…）连同后面跟着的助词、助动词。前一个是接头词、或者前后都是名词（复合词）时不断
+const PHRASE_HEAD = new Set(['名', '动', '形', '副', '连体', '接续', '感叹', '接头']);
+function phraseStart(toks, ti) {
+  const t = toks[ti], p = toks[ti - 1];
+  if (t.sp || p.sp) return true;
+  if (!PHRASE_HEAD.has(t.pos) || !t.v && t.pos !== '连体' && t.pos !== '接续' && t.pos !== '感叹' && t.pos !== '接头') return false;
+  if (p.pos === '接头') return false;
+  if (p.pos === '名' && t.pos === '名') return false;
+  return true;
 }
 function lineBody(line, li) {
   return `<div class="jp" lang="ja" data-li="${li}">${jpHTML(line, li)}</div>`
@@ -3163,3 +3188,9 @@ requestAnimationFrame(frame);
 }
 // 调试入口：地址加 ?debug 后可在控制台用 __uta.onState(...) 模拟播放状态
 if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs, tick, stepReading, setView }; }
+
+// 不让拖动歌词、图片：选中的歌词一拖就成了「拖放」，WebKit 会在页面上画插入光标（Mac App 里像一条紫线）
+document.addEventListener('dragstart', (e) => {
+  const el = e.target.nodeType === 1 ? e.target : e.target.parentElement;
+  if (!el?.closest('input, textarea, [contenteditable]')) e.preventDefault();
+});

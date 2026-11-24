@@ -168,16 +168,38 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .line:hover { background: rgba(255, 255, 255, .06); }
 .line .jp { font: 700 clamp(22px, 2.75vw, 38px)/1.5 var(--font-ja); letter-spacing: .01em; }
 .line .zh { font-size: clamp(13px, 1.25vw, 17px); margin-top: 2px; font-weight: 500; opacity: .85; }
+/* 长句：只在文节之间换行（app.js 的 phraseStart 放的 <wbr>），两行排得差不多长；一个文节本身比一行还长时才在字间断 */
+#scroll .line .jp { word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance; }
+#scroll .line .zh, #scroll .line .roma { text-wrap: balance; }
 .line .roma { font-size: clamp(11px, 1vw, 14px); letter-spacing: .04em; opacity: .7; }
 .line.active { color: var(--fg); transform: none; }
+/* 当前句（和同组亮着的句子）不虚化，滤镜直接拿掉，不留一个 blur(0)：Mac App（WebKit）里带滤镜的图层边上
+   偶尔会画出一条紫色的细线（显卡里没清干净的一行像素），正落在当前句的下沿。没有滤镜就没有这个图层 */
+.line.active, .line.co { filter: none; }
+/* Mac App 里歌词行不用模糊滤镜（filter: blur）：WebKit 给带滤镜的元素单独开一个图层，图层边上（比元素四周再外扩模糊半径那么一圈）
+   时不时会画出一条紫色的细线——鼠标指着的那行上沿一条横线、某个字后面一条竖线。浏览器里没有这个问题，照旧用滤镜。
+   App 里换个办法做出同样的虚化：字本身透明，只留一层模糊的文字阴影（text-shadow），离当前句越远阴影越散。
+   阴影是画在这一行自己的内容里的，不另开图层，也就没有那条线（mac-app 这个 class 由 App 外壳加在 <html> 上） */
+.mac-app .line { filter: none; --bl: calc(.8px + min(var(--d, 0), 5) * 1.5px);
+  transition: opacity .6s ease, color .45s ease, text-shadow .6s ease, transform var(--spring-ms, .65s) var(--spring, cubic-bezier(.2, .9, .25, 1)), background .2s; }
+.mac-app :is(#app, #morph-ghost):not(.dict-mode):not(.edit-mode) #scroll:not(.free) .line:not(.active):not(.co):not(.gap) { color: rgba(255, 255, 255, .01); text-shadow: 0 0 var(--bl) var(--fg-2), 0 0 var(--bl) var(--fg-3); }
+/* 字的颜色不能是全透明：WebKit 遇到全透明的字连阴影一起不画，所以留 1% */
+/* 换样式的动画里，原来那页歌词会抄一份（#morph-ghost）盖在原处慢慢淡出：那一份也得是虚的，不然清楚的旧歌词和大字叠在一起 */
+/* 滚动歌词的日文在 Mac App 里统一用系统字体（英文、数字是 SF，日文落到系统给的 Hiragino）：
+   「Uta JP」（只管日文字的那个本地字体，见文件开头）在 WebKit 里配上文字阴影几乎画不出来，虚化的行就看不见了；
+   只给虚化的行换字体又不行——两种字体的字宽不一样，唱到这一句时会突然变大变小、跳一下。所以每一行（包括正在唱的）都用同一套 */
+.mac-app :is(#app, #morph-ghost) #scroll .line .jp { font-family: system-ui, -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; }
+.mac-app #scroll .line .ann { color: var(--fg); text-shadow: none; } /* 标注卡片不虚化 */
 .line.active .ann { animation: ann-in .5s .12s cubic-bezier(.2, .8, .2, 1) backwards; }
 @keyframes ann-in { from { opacity: 0; transform: translateY(6px); } }
 /* 修改模式：当前句前后各两句也列出标注（稍暗一点，当前句仍然最显眼）；收起时原地淡出，不再占位置 */
 .line.ann-on .ann { display: flex; animation: ann-in .45s cubic-bezier(.2, .8, .2, 1) backwards; }
 .line.ann-on:not(.active) .ann { opacity: .78; transition: opacity .2s; }
 .line.ann-on:not(.active) .ann:hover { opacity: 1; }
-.line .ann.leaving { display: flex; position: absolute; pointer-events: none; animation: ann-out .2s ease-in forwards; }
-@keyframes ann-out { to { opacity: 0; transform: translateY(-4px); } }
+/* 收起的标注：让出位置后下面那句马上往上合拢，正好经过它原来的地方。淡得慢了两样就叠在一起，
+   所以要在合拢的那一句到达之前就淡完（弹簧开头走得最快，0.1 秒内已经走了一大截） */
+.line .ann.leaving { display: flex; position: absolute; pointer-events: none; animation: ann-out .1s ease-out forwards; transform-origin: 0 0; }
+@keyframes ann-out { to { opacity: 0; transform: scale(.96); } }
 .line.past { color: var(--fg-3); }
 /* 实验功能 2：紧凑的几句一起显示。.co = 和当前句同一组、前面已经唱过的句子：不暗下去，和当前句一样亮、一样清楚、一样大 */
 .line.co { color: var(--fg); transform: none; }
@@ -1065,25 +1087,31 @@ input[type=checkbox]:checked::before { background: #2a2635; box-shadow: 0 2px 5p
 @media (prefers-reduced-motion: reduce) { .view-apple #art-wrap { transition: none; } }
 
 /* ---------- 背景：封面颜色的色块缓慢流动（Apple Music 歌词页那样） ----------
-   五团柔和的圆形渐变（颜色、大小由 app.js 的 paintMesh 按封面取色给），各自以不同的速度漂移、旋转、伸缩。
+   底色是封面里最多的颜色；五团柔和的椭圆渐变（颜色、大小由 app.js 的 paintMesh 按封面取色给）
+   分在四角和上边，各自沿一圈闭合的路线慢慢绕、转、伸缩，不会有一团大圆停在正中间。
+   每次打开时各团从路线上随机的一点开始（app.js 给负的 animation-delay），所以不会每次都是同一个样子。
    只动 transform（交给显卡），不用模糊滤镜；换歌时颜色（注册过的 --mc）和大小慢慢过渡 */
 @property --mc { syntax: '<color>'; inherits: false; initial-value: rgba(0, 0, 0, 0); }
 #bg-mesh { position: absolute; inset: 0; overflow: hidden; background: var(--base, transparent); opacity: 0; transition: opacity 1.4s ease, background-color 1.6s ease; }
 #bg-mesh.on { opacity: 1; }
 #bg.meshed #bg-img { opacity: .18; } /* 有色块时，模糊的封面只留一点点纹理 */
-#bg-mesh i { position: absolute; width: var(--s, 70vmax); height: var(--s, 70vmax); border-radius: 50%;
-  background: radial-gradient(closest-side, var(--mc) 0%, color-mix(in srgb, var(--mc) 55%, transparent) 45%, transparent 100%);
-  transition: --mc 1.6s ease, width 2.2s ease, height 2.2s ease; will-change: transform; }
-#bg-mesh i:nth-child(1) { left: -18%; top: -24%; animation: mesh-1 34s ease-in-out infinite alternate; }
-#bg-mesh i:nth-child(2) { right: -22%; top: -10%; animation: mesh-2 41s ease-in-out infinite alternate; }
-#bg-mesh i:nth-child(3) { left: 8%; bottom: -34%; animation: mesh-3 29s ease-in-out infinite alternate; }
-#bg-mesh i:nth-child(4) { right: -8%; bottom: -26%; animation: mesh-4 37s ease-in-out infinite alternate; }
-#bg-mesh i:nth-child(5) { left: 30%; top: 18%; animation: mesh-5 23s ease-in-out infinite alternate; }
-@keyframes mesh-1 { 0% { transform: translate(0, 0) rotate(0) scale(1); } 50% { transform: translate(22vw, 14vh) rotate(60deg) scale(1.15); } 100% { transform: translate(8vw, 30vh) rotate(140deg) scale(.92); } }
-@keyframes mesh-2 { 0% { transform: translate(0, 0) rotate(0) scale(1.05); } 50% { transform: translate(-26vw, 22vh) rotate(-80deg) scale(.9); } 100% { transform: translate(-10vw, 40vh) rotate(-150deg) scale(1.12); } }
-@keyframes mesh-3 { 0% { transform: translate(0, 0) rotate(0) scale(.95); } 50% { transform: translate(30vw, -20vh) rotate(90deg) scale(1.1); } 100% { transform: translate(12vw, -36vh) rotate(170deg) scale(1); } }
-@keyframes mesh-4 { 0% { transform: translate(0, 0) rotate(0) scale(1); } 50% { transform: translate(-30vw, -16vh) rotate(-70deg) scale(1.18); } 100% { transform: translate(-42vw, 6vh) rotate(-130deg) scale(.9); } }
-@keyframes mesh-5 { 0% { transform: translate(0, 0) scale(.8); } 50% { transform: translate(-18vw, 20vh) scale(1.05); } 100% { transform: translate(16vw, -10vh) scale(.88); } }
+#bg-mesh i { position: absolute; left: var(--x); top: var(--y); width: var(--s, 60vmax); height: calc(var(--s, 60vmax) * .72);
+  margin: calc(var(--s, 60vmax) * -.36) 0 0 calc(var(--s, 60vmax) * -.5); border-radius: 50%;
+  background: radial-gradient(closest-side, var(--mc) 0%, color-mix(in srgb, var(--mc) 78%, transparent) 28%,
+    color-mix(in srgb, var(--mc) 42%, transparent) 58%, color-mix(in srgb, var(--mc) 12%, transparent) 82%, transparent 100%);
+  transition: --mc 1.6s ease, width 2.2s ease, height 2.2s ease, margin 2.2s ease; will-change: transform;
+  animation: var(--anim) linear infinite; }
+#bg-mesh i:nth-child(1) { --x: 12%; --y: 14%; --anim: mesh-1 48s; }
+#bg-mesh i:nth-child(2) { --x: 88%; --y: 12%; --anim: mesh-2 56s; }
+#bg-mesh i:nth-child(3) { --x: 10%; --y: 90%; --anim: mesh-3 44s; }
+#bg-mesh i:nth-child(4) { --x: 90%; --y: 86%; --anim: mesh-4 52s; }
+#bg-mesh i:nth-child(5) { --x: 50%; --y: 6%;  --anim: mesh-5 40s; }
+/* 每条路线首尾相同，循环播放时接得上；最远也只往中间伸进来四分之一屏左右 */
+@keyframes mesh-1 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(18vw, 6vh) rotate(40deg) scale(1.1, .95); } 50% { transform: translate(10vw, 22vh) rotate(95deg) scale(.92); } 75% { transform: translate(-4vw, 12vh) rotate(150deg) scale(1.05, 1.12); } }
+@keyframes mesh-2 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(-8vw, 18vh) rotate(-50deg) scale(.94, 1.08); } 50% { transform: translate(-22vw, 8vh) rotate(-110deg) scale(1.1); } 75% { transform: translate(-10vw, -6vh) rotate(-160deg) scale(.96); } }
+@keyframes mesh-3 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(6vw, -18vh) rotate(55deg) scale(1.08, .94); } 50% { transform: translate(22vw, -8vh) rotate(120deg) scale(.95); } 75% { transform: translate(12vw, 6vh) rotate(170deg) scale(1.1); } }
+@keyframes mesh-4 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(-18vw, -4vh) rotate(-45deg) scale(1.06); } 50% { transform: translate(-12vw, -22vh) rotate(-100deg) scale(.92, 1.1); } 75% { transform: translate(4vw, -12vh) rotate(-155deg) scale(1.04); } }
+@keyframes mesh-5 { 0%, 100% { transform: translate(0, 0) rotate(0) scale(1); } 25% { transform: translate(-24vw, 4vh) rotate(30deg) scale(1.08); } 50% { transform: translate(0, 14vh) rotate(80deg) scale(.9, 1.06); } 75% { transform: translate(24vw, 4vh) rotate(130deg) scale(1.04); } }
 /* 整体压暗一点，上面的白字才看得清；边角再暗一些 */
 #bg-mesh::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 100% at 40% 35%, rgba(10, 8, 18, .18), rgba(10, 8, 18, .5)); }
 @media (prefers-reduced-motion: reduce) { #bg-mesh i { animation: none; } }
