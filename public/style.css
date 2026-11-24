@@ -195,8 +195,10 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .line.ann-on .ann { display: flex; animation: ann-in .45s cubic-bezier(.2, .8, .2, 1) backwards; }
 .line.ann-on:not(.active) .ann { opacity: .78; transition: opacity .2s; }
 .line.ann-on:not(.active) .ann:hover { opacity: 1; }
-.line .ann.leaving { display: flex; position: absolute; pointer-events: none; animation: ann-out .2s ease-in forwards; }
-@keyframes ann-out { to { opacity: 0; transform: translateY(-4px); } }
+/* 收起的标注：让出位置后下面那句马上往上合拢，正好经过它原来的地方。淡得慢了两样就叠在一起，
+   所以要在合拢的那一句到达之前就淡完（弹簧开头走得最快，0.1 秒内已经走了一大截） */
+.line .ann.leaving { display: flex; position: absolute; pointer-events: none; animation: ann-out .1s ease-out forwards; transform-origin: 0 0; }
+@keyframes ann-out { to { opacity: 0; transform: scale(.96); } }
 .line.past { color: var(--fg-3); }
 /* 实验功能 2：紧凑的几句一起显示。.co = 和当前句同一组、前面已经唱过的句子：不暗下去，和当前句一样亮、一样清楚、一样大 */
 .line.co { color: var(--fg); transform: none; }
