@@ -173,6 +173,11 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 /* 当前句（和同组亮着的句子）不虚化，滤镜直接拿掉，不留一个 blur(0)：Mac App（WebKit）里带滤镜的图层边上
    偶尔会画出一条紫色的细线（显卡里没清干净的一行像素），正落在当前句的下沿。没有滤镜就没有这个图层 */
 .line.active, .line.co { filter: none; }
+/* Mac App 里歌词行一律不用模糊滤镜：WebKit 给带滤镜的元素单独开一个图层，图层边上（比元素四周再外扩模糊半径那么一圈）
+   时不时会画出一条紫色的细线——鼠标指着的那行上沿一条横线、某个字后面一条竖线。浏览器里没有这个问题，照旧模糊。
+   App 里离当前句远的行改为只靠变淡来区分（mac-app 这个 class 由 App 外壳加在 <html> 上） */
+.mac-app .line { filter: none; opacity: calc(1 - min(var(--d, 0), 5) * .12); }
+.mac-app .line.active, .mac-app .line.co, .mac-app #scroll.free .line, .mac-app .dict-mode .line, .mac-app .edit-mode .line { opacity: 1; }
 .line.active .ann { animation: ann-in .5s .12s cubic-bezier(.2, .8, .2, 1) backwards; }
 @keyframes ann-in { from { opacity: 0; transform: translateY(6px); } }
 /* 修改模式：当前句前后各两句也列出标注（稍暗一点，当前句仍然最显眼）；收起时原地淡出，不再占位置 */
