@@ -17,7 +17,7 @@ fi
 # 后台运行时由桌面的小应用启动：程序结束后把它也关掉（程序坞里的图标随之消失）
 quit_app() { [ -n "$UTA_APP_PID" ] && kill "$UTA_APP_PID" 2>/dev/null; }
 
-export PATH="$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node" 2>/dev/null | tail -1)/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/node/bin:$HOME/.nvm/versions/node/$(ls "$HOME/.nvm/versions/node" 2>/dev/null | tail -1)/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v node >/dev/null; then
   echo "没有找到 Node.js，请先安装：https://nodejs.org"
   if [ -n "$BG" ]; then

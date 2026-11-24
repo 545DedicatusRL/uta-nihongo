@@ -8,7 +8,8 @@ import {
   ROOT, getSettings, saveSettings, getSongMeta, saveSongMeta,
   getUserDict, saveUserDict, getVocab, saveVocab, getMarks, saveMarks, readJSON, writeJSON, dataPath,
 } from './store.js';
-import * as music from './music.js';
+import * as appleMusic from './music.js';
+import * as netease from './netease.js';
 import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
 import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
@@ -17,6 +18,9 @@ import { showUI, installedBrowsers, pickBrowser } from './window.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError, resetDictCache } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
+// 用哪个播放器：Apple Music（默认）或网易云音乐。设置里改了以后重启程序生效；环境变量 UTA_PLAYER 优先
+const PLAYER = (process.env.UTA_PLAYER || getSettings().player) === 'netease' ? 'netease' : 'apple';
+const music = PLAYER === 'netease' ? netease : appleMusic;
 
 // 版本信息：电脑上可能有不止一份程序，界面和启动脚本靠它分辨正在运行的是哪一份
 function readVersion() {
@@ -82,6 +86,12 @@ async function loadSong(track, { refresh = false } = {}) {
   try {
     if (!cand || refresh) {
       const cands = await findCandidates(track);
+      // 网易云模式下知道正在播的这首在网易云里的 ID：直接用它的歌词，不靠搜索去猜
+      if (track.neteaseId) {
+        const exact = cands.find((c) => c.source === 'netease' && c.id === track.neteaseId);
+        if (exact) exact.score = 999;
+        else cands.unshift({ source: 'netease', id: track.neteaseId, title: track.name, artists: track.artist ? track.artist.split(' / ') : [], album: track.album || '', duration: track.duration || 0, cover: '', score: 999 });
+      }
       const best = await pickBest(cands);
       if (best) { cand = { ...slimCand(best), auto: true }; saveSongMeta(key, { source: cand }); }
       else cand = null;
@@ -202,6 +212,7 @@ const routes = {
   // 播放队列
   'GET /api/queue': (req, res, q) => send(res, 200, queue.view(Math.min(Number(q.get('n')) || 150, 5000))),
   'POST /api/queue/play': async (req, res) => {
+    if (!music.caps.queue) return send(res, 400, { error: `${music.NAME}模式下不能从这里点歌，请在${music.NAME}里选歌` });
     const ok = await queue.playList(await readBody(req));
     send(res, ok ? 200 : 400, ok ? queue.summary() : { error: '这份列表里没有能播放的歌' });
   },
@@ -214,6 +225,8 @@ const routes = {
 
   'GET /api/song': async (req, res, q) => {
     const track = { pid: q.get('pid') || '', name: q.get('name') || '', artist: q.get('artist') || '', album: q.get('album') || '', duration: Number(q.get('duration')) || 0 };
+    const ne = /^ne-(\d+)$/.exec(track.pid);
+    if (ne) track.neteaseId = ne[1];
     send(res, 200, await loadSong(track, { refresh: q.has('refresh') }));
   },
   'GET /api/candidates': async (req, res, q) => {
@@ -318,7 +331,7 @@ const routes = {
     res.end('﻿' + rows.join('\n'));
   },
 
-  'GET /api/info': (req, res) => send(res, 200, { root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size, windows: appClients.size }),
+  'GET /api/info': (req, res) => send(res, 200, { app: !!process.env.UTA_APP, player: PLAYER, playerName: music.NAME, caps: music.caps, root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size, windows: appClients.size }),
   // 更新代码后原地重启：退出并让启动脚本重新拉起。不是由启动脚本启动的（如 npm start）则只会退出。
   'POST /api/restart': (req, res) => {
     send(res, 200, { ok: true });
@@ -350,6 +363,7 @@ const routes = {
     const s = getSettings();
     send(res, 200, {
       model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY,
+      player: s.player === 'netease' ? 'netease' : 'apple', playerInUse: PLAYER,
       browser: s.browser || 'auto', browsers: installedBrowsers(), browserInUse: pickBrowser(s.browser),
     });
   },
@@ -358,6 +372,7 @@ const routes = {
     const patch = {};
     if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey.trim();
     if (typeof body.model === 'string' && body.model.trim()) patch.model = body.model.trim();
+    if (body.player === 'apple' || body.player === 'netease') patch.player = body.player;
     if (typeof body.browser === 'string' && (['auto', 'default'].includes(body.browser) || installedBrowsers().includes(body.browser))) patch.browser = body.browser;
     saveSettings(patch);
     send(res, 200, { ok: true });
@@ -385,7 +400,8 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`唱歌学日语 已启动： http://localhost:${PORT}`);
-  if (!process.env.UTA_NO_MUSIC) music.startWatcher(); // UTA_NO_MUSIC=1：不连接 Apple Music（调试界面用）
+  console.log(`播放器：${music.NAME}`);
+  if (!process.env.UTA_NO_MUSIC) music.startWatcher(); // UTA_NO_MUSIC=1：不连接播放器（调试界面用）
   if (!process.env.UTA_NO_MUSIC && !process.env.UTA_NO_SHORTCUT) {
     ensureDesktopShortcut()
       .then((r) => {
