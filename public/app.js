@@ -562,9 +562,21 @@ function jpHTML(line, li) {
       const cls = `seg${isK ? ' k' : ''}${whole ? ' fu' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
       inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}${parts ? `<rt class="rks">${rks}</rt>` : `<rt>${esc(seg.r)}</rt>`}</ruby>` : chars}</span>`;
     });
-    html += `<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
+    html += `${ti && phraseStart(line.tokens, ti) ? '<wbr>' : ''}<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
   });
   return html;
+}
+// 长句折行只在「文节」之间断：样式里不许在日文字之间随便断（word-break: keep-all），这里在每个文节开头放一个 <wbr>，
+// 浏览器只能在这些地方换行，再配上 text-wrap: balance 把两行排得差不多长——不会把「…だったらい / い」这样拆开。
+// 文节 = 一个实词（名词、动词、形容词、副词…）连同后面跟着的助词、助动词。前一个是接头词、或者前后都是名词（复合词）时不断
+const PHRASE_HEAD = new Set(['名', '动', '形', '副', '连体', '接续', '感叹', '接头']);
+function phraseStart(toks, ti) {
+  const t = toks[ti], p = toks[ti - 1];
+  if (t.sp || p.sp) return true;
+  if (!PHRASE_HEAD.has(t.pos) || !t.v && t.pos !== '连体' && t.pos !== '接续' && t.pos !== '感叹' && t.pos !== '接头') return false;
+  if (p.pos === '接头') return false;
+  if (p.pos === '名' && t.pos === '名') return false;
+  return true;
 }
 function lineBody(line, li) {
   return `<div class="jp" lang="ja" data-li="${li}">${jpHTML(line, li)}</div>`
