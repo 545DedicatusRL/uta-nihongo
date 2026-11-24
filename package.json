@@ -7,6 +7,9 @@
   "scripts": {
     "start": "node server/index.js"
   },
+  "uta": {
+    "repo": "545DedicatusRL/uta-nihongo"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
     "@fontsource-variable/noto-sans-jp": "^5.3.1",

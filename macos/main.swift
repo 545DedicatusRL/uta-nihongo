@@ -136,6 +136,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     config.userContentController.addUserScript(WKUserScript(source: DRAG_SCRIPT, injectionTime: .atDocumentStart, forMainFrameOnly: true))
     config.userContentController.add(self, name: "uta")
     web = WKWebView(frame: .zero, configuration: config)
+    // 不接受拖进来的东西：本程序用不到拖放，而 WebKit 在拖动经过页面时会画插入光标
+    // （一条竖线，或者带个小方块的横线），拖窗口、拖歌词时偶尔会留在屏幕上，看着像一条紫线
+    web.unregisterDraggedTypes()
     web.navigationDelegate = self
     web.uiDelegate = self
     web.setValue(false, forKey: "drawsBackground") // 载入前不闪白

@@ -35,6 +35,7 @@ done
 iconutil -c icns "$ICONSET" -o "$STAGE/Contents/Resources/icon.icns"
 
 VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+BUNDLE_VER="${VERSION%%-*}" # Info.plist 的版本号只能是数字和点：1.0.3-netease.9 → 1.0.3（完整的版本号另外写一份）
 cat > "$STAGE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -45,8 +46,9 @@ cat > "$STAGE/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>$NAME</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$BUNDLE_VER</string>
+  <key>CFBundleVersion</key><string>$BUNDLE_VER</string>
+  <key>UtaReleaseVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.education</string>
   <key>NSHighResolutionCapable</key><true/>
