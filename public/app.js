@@ -758,14 +758,20 @@ function glide(change, pivot = S.active) {
   const far = clamp(elScroll.scrollTop - scroll0, -H * 0.5, H * 0.5); // 之前不在视野里的行（比如拖了进度）：从不远处滑进来
   const a = Math.max(pivot, 0);
   const up = elScroll.scrollTop >= scroll0;
+  const moves = [];
   for (let k = Math.min(lo1, lo2); k <= Math.max(hi1, hi2); k++) {
     if (k > hi2 + 2 || k < lo2 - 2) continue; // 换完以后看不见的行不用动
     const el = els[k];
     const d = before.has(k) ? before.get(k) - el.getBoundingClientRect().top : far;
     if (Math.abs(d) < 0.5) continue;
     // 往上走时，当前行以上的一起先走，下面的行一行比一行晚；往回走时反过来
-    const lag = Math.min(Math.max(0, up ? k - a : a - k), 9) * 38;
-    glideAnims.push(el.animate([{ translate: `0 ${d.toFixed(1)}px` }, { translate: '0 0' }], { duration: SPRING.ms, delay: lag, easing: SPRING.easing, fill: 'backwards' }));
+    moves.push([el, d, Math.min(Math.max(0, up ? k - a : a - k), 9) * 38]);
+  }
+  // 最早动的那一行不等：要动的行全都离 pivot 很远时（自己划到后面去了），每一行算出来都是最长的那个延迟，
+  // 结果是整屏先愣一下才一起动。减掉其中最小的，错开的节奏不变，只是不白等
+  const wait = Math.min(...moves.map((m) => m[2]));
+  for (const [el, d, lag] of moves) {
+    glideAnims.push(el.animate([{ translate: `0 ${d.toFixed(1)}px` }, { translate: '0 0' }], { duration: SPRING.ms, delay: lag - wait, easing: SPRING.easing, fill: 'backwards' }));
   }
 }
 function scrollToActive(instant) {
@@ -1249,7 +1255,7 @@ function setMode(mode) {
       const el = elScroll.children[k], r = el.getBoundingClientRect();
       if (S.lines[k]?.gap || !r.height) continue;
       const d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0; // 离屏幕四成高的那条线最近的一句
-      if (d < best) { best = d; anchor = { el, top: r.top }; }
+      if (d < best) { best = d; anchor = { el, top: r.top, i: k }; }
     }
   }
   if (anchor) armReturn();
@@ -1265,7 +1271,7 @@ function setMode(mode) {
     paintAnnotations();
     if (anchor) elScroll.scrollTop += anchor.el.getBoundingClientRect().top - anchor.top;
     else jumpToActive();
-  });
+  }, anchor ? anchor.i : S.active); // 认准了眼前的一句时，周围的行以它为中心错开，而不是以（可能离得很远的）正在唱的那句
 }
 function resumeIfPausedByDict() {
   if (S.pausedByDict) { S.pausedByDict = false; control('play'); }
@@ -2226,16 +2232,23 @@ function reorderVocab() {
   box.append(...list.map((v) => cards.get(v.id)));
   for (const [id, el] of cards) el.classList.toggle('veil', veiled(id));
   if (still) return;
+  // 只给换完之后看得见的那几张做动画（一屏最多四张，上下各多带一张，一共不超过 VMOVE_MAX 张）。
+  // 词多了以后要是每张都滑，几十张玻璃卡片一起横穿整个列表，又乱又卡；
+  // 换走的那些不滑出去（它们的新位置在看不见的地方），直接到位
   const view = box.getBoundingClientRect();
-  const inView = (y, h) => y + h > view.top - 80 && y < view.bottom + 80;
   let n = 0;
   for (const v of list) {
-    const el = cards.get(v.id), r = el.getBoundingClientRect(), from = before.get(v.id);
-    if (Math.abs(from - r.top) < 1 || (!inView(r.top, r.height) && !inView(from, r.height))) continue; // 没动的、全程看不见的不用动画
+    const el = cards.get(v.id), r = el.getBoundingClientRect();
+    if (r.bottom <= view.top - 80) continue;
+    if (r.top >= view.bottom + 80 || n >= VMOVE_MAX) break; // 卡片是从上往下排的，再往后都在更下面
+    // 原来在很远的地方的：从列表边缘外面一点滑进来，不用真的从几千像素外飞过来
+    const from = Math.max(view.top - r.height - 40, Math.min(view.bottom + 40, before.get(v.id)));
+    if (Math.abs(from - r.top) < 1) continue;
     el.animate([{ translate: `0 ${(from - r.top).toFixed(1)}px` }, { translate: '0 0' }],
-      { id: 'vmove', duration: SPRING.ms, easing: SPRING.easing, delay: Math.min(n++, 10) * 22, fill: 'backwards' });
+      { id: 'vmove', duration: SPRING.ms, easing: SPRING.easing, delay: n++ * 22, fill: 'backwards' });
   }
 }
+const VMOVE_MAX = 6;
 const shuffledIds = () => {
   const ids = vocabList.map((v) => v.id);
   for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
