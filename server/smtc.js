@@ -9,9 +9,10 @@
 // 和 Apple Music / 网易云模式的差别：
 //   - 拿不到歌曲 ID，只有歌名 / 歌手 / 专辑 / 时长：歌词靠搜索匹配
 //   - 进度每秒报 3～4 次，带时间戳，中间按时间往前推；切歌后新进度要晚 1 秒左右才到
-//   - 不能拖动进度（QQ 音乐不接受外部的跳转请求）；播放 / 暂停 / 上一首 / 下一首可以
+//   - 播放 / 暂停 / 上一首 / 下一首走系统媒体接口。拖动进度不行（QQ 音乐不理会系统媒体接口的跳转请求），
+//     改用 QQ 音乐自己的命令行：再运行一次 QQMusic.exe /seekto 秒数，它会把命令转给正在运行的那个。只能跳到整秒
 //   - 没有资料库和播放列表，在 QQ 音乐里选歌
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -19,7 +20,7 @@ import path from 'node:path';
 import { ROOT, dataPath, safeName } from './store.js';
 
 export const NAME = 'QQ 音乐';
-export const caps = { library: false, queue: false, seek: false };
+export const caps = { library: false, queue: false, seek: /^qqmusic\.exe$/i.test(process.env.UTA_SMTC_APP || 'QQMusic.exe') };
 export const prefer = 'qq'; // 歌词优先用这个来源的（正在放的就是它家的歌）
 
 const APP = process.env.UTA_SMTC_APP || 'QQMusic.exe';
@@ -37,6 +38,8 @@ let cur = { key: '', pid: '', at: 0 };
 let anchor = null;
 let regress = 0; // 连着几次「往回跳了一点」
 let lastState = 'paused';
+let exePath = ''; // 正在运行的 QQMusic.exe 在哪（小助手报上来的），跳转进度要用
+let seekedAt = 0; // 刚让它跳过进度：接下来 2 秒里的进度不当成毛刺过滤（往回跳一点是正常的，只能跳到整秒）
 let playSince = 0; // 这一段是从什么时候开始播的（暂停后再播，进度要从这时起算，不能从暂停前的时间戳起算）
 let lastTrackState = null; // 上一次报出去的、带着歌曲的状态
 
@@ -44,6 +47,7 @@ function onLine(o) {
   if ('reply' in o) { const i = replies.findIndex((r) => r.cmd === o.reply); if (i >= 0) replies.splice(i, 1)[0].resolve(o); return; }
   clearTimeout(waitTimer);
   const now = Date.now();
+  if ('exe' in o) exePath = o.exe || '';
   if (!o.running) {
     cur = { key: '', pid: '', at: 0 }; anchor = null;
     // QQ 音乐开着却没有会话：多半是没打开「显示系统媒体传输控件」，或者版本太旧
@@ -68,7 +72,10 @@ function onLine(o) {
       // 偶尔会往回跳 0.25～2 秒的毛刺：只来一次的丢掉，连着来两次就认（真的卡了一下）
       const expect = anchor && state === 'playing' ? anchor.pos + (next.at - anchor.at) / 1000 : null;
       const back = expect === null ? 0 : expect - next.pos;
-      if (back > 0.25 && back < 2 && ++regress < 2) { /* 丢掉这一次 */ } else { anchor = next; regress = 0; }
+      // 刚让它跳过进度（2 秒内）：QQ 音乐真的跳过去之前，还会带着新时间戳报一两次跳之前的位置，离目标远的不认；
+      // 离得近的都认（只能跳到整秒，比目标早一点是正常的，不算毛刺）
+      if (now - seekedAt < 2000) { if (Math.abs(back) < 3) { anchor = next; regress = 0; } }
+      else if (back > 0.25 && back < 2 && ++regress < 2) { /* 丢掉这一次 */ } else { anchor = next; regress = 0; }
     }
     if (o.end > 0) cur.duration = o.end;
   }
@@ -140,13 +147,31 @@ function send(cmd, arg = '') {
 }
 
 // ---------- 播放控制 ----------
-export async function control(cmd) {
+export async function control(cmd, a = '') {
   if (cmd === 'volume') return 'ok'; // 音量交给 QQ 音乐自己
-  if (cmd === 'seek') throw new Error(`${NAME}不支持从外面拖动进度，请在${NAME}里拖`);
+  if (cmd === 'seek') return seek(a);
   if (!['play', 'pause', 'playpause', 'next', 'prev'].includes(cmd)) throw new Error(`${NAME}模式不支持：${cmd}`);
   const r = await send(cmd);
   if (!r.ok) throw new Error(r.err || `${NAME}没有接受这个操作`);
   return 'ok';
+}
+
+// 跳到某一秒：QQ 音乐自己的命令行 /seekto（它会把命令转给已经在运行的那个，自己马上退出）。
+// 只能到整秒，往前取整：宁可早一点点，不要把那一句的开头切掉
+function seek(sec) {
+  if (!caps.seek) return Promise.reject(new Error(`${NAME}不支持从外面拖动进度，请在${NAME}里拖`));
+  if (!exePath || !player.state.track) return Promise.reject(new Error(`${NAME}没有在播放`));
+  const to = Math.max(0, Math.floor(Number(sec) || 0));
+  return new Promise((resolve, reject) => {
+    execFile(exePath, ['/seekto', String(to)], { timeout: 10000, windowsHide: true }, (err) => {
+      if (err) return reject(new Error(`${NAME}没有接受跳转：${err.message}`));
+      // 不等它下一次报进度：先按跳到的位置算，界面不会先跳回原处再跳过去
+      seekedAt = Date.now();
+      anchor = { pos: to, at: seekedAt };
+      if (lastTrackState) emit(lastTrackState = { ...lastTrackState, pos: to }); // 马上报一次，不等小助手的下一行
+      resolve('ok');
+    });
+  });
 }
 
 // ---------- 资料库：这个模式下不支持 ----------

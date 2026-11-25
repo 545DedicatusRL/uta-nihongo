@@ -17,15 +17,17 @@ import { notoCSS, notoFile } from './fonts.js';
 import { lookupWords, annotateWithAI, getAICache, aiAvailable, describeAIError, resetDictCache } from './annotate.js';
 
 const PORT = Number(process.env.PORT) || 3939;
-
 // 用哪个播放器。每个播放器是一个模块，接口都一样（NAME / caps / player / control / getArtwork …）：
-//   apple   Apple Music（macOS，music.js）
-//   netease 网易云音乐（Windows 客户端，netease-win.js）
-//   qq      QQ 音乐（Windows，走系统媒体接口，smtc.js）
-// 设置里改了以后重启程序生效；环境变量 UTA_PLAYER 优先。只载入选中的那一个。
+//   macOS：auto    自动（默认）：Apple Music 和网易云哪个在播跟哪个（auto.js）
+//          apple   只用 Apple Music（music.js）
+//          netease 只用网易云音乐（Mac 客户端，netease.js）
+//   Windows：auto    自动（默认）：网易云和 QQ 音乐哪个在播跟哪个（auto.js）
+//            netease 只用网易云音乐（Windows 客户端，netease-win.js）
+//            qq      只用 QQ 音乐（走系统媒体接口，smtc.js）
+// 设置里改了以后重启程序生效；环境变量 UTA_PLAYER 优先。只载入选中的那一个（别的系统的模块碰都不碰）。
 const PLAYERS = process.platform === 'darwin'
-  ? { apple: './music.js' }
-  : process.platform === 'win32' ? { netease: './netease-win.js', qq: './smtc.js' } : {};
+  ? { auto: './auto.js', apple: './music.js', netease: './netease.js' }
+  : process.platform === 'win32' ? { auto: './auto.js', netease: './netease-win.js', qq: './smtc.js' } : {};
 const wantPlayer = process.env.UTA_PLAYER || getSettings().player;
 const PLAYER = PLAYERS[wantPlayer] ? wantPlayer : Object.keys(PLAYERS)[0];
 if (!PLAYER) { console.error('这个程序目前只支持 macOS（Apple Music）和 Windows（网易云音乐 / QQ 音乐）。'); process.exit(1); }
@@ -362,7 +364,7 @@ const routes = {
     res.end('﻿' + rows.join('\n'));
   },
 
-  'GET /api/info': (req, res) => send(res, 200, { player: PLAYER, playerName: music.NAME, caps: music.caps, players: Object.keys(PLAYERS), platform: process.platform, root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size, windows: appClients.size }),
+  'GET /api/info': (req, res) => send(res, 200, { app: !!process.env.UTA_APP, player: PLAYER, playerName: music.NAME, caps: music.caps, players: Object.keys(PLAYERS), platform: process.platform, root: ROOT, version: VERSION, boot: BOOT, clients: sseClients.size, windows: appClients.size }),
   // 更新代码后原地重启：退出并让启动脚本重新拉起。不是由启动脚本启动的（如 npm start）则只会退出。
   'POST /api/restart': (req, res) => {
     send(res, 200, { ok: true });
@@ -435,7 +437,9 @@ const server = http.createServer(async (req, res) => {
   const rel = path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
   let file = path.join(PUBLIC, rel === '/' || rel === '\\' ? 'index.html' : rel);
   if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, 'Not found', 'text/plain');
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+  // no-store：界面文件都在本机、很小，不缓存。App 里的系统 WebKit 刷新页面时有时会沿用旧的样式 / 脚本，
+  // 更新后界面没变；不缓存就一定拿到磁盘上的新文件
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
   fs.createReadStream(file).pipe(res);
 });
 

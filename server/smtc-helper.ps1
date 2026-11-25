@@ -6,7 +6,8 @@
 # Windows PowerShell 5.1 (preinstalled) can call that WinRT API directly, so nothing has to be installed.
 #
 # stdout: one JSON object per line, every $IntervalMs
-#   { running, proc, app, status, title, artist, album, pos, end, stamp, now, canSeek }
+#   { running, proc, exe, app, status, title, artist, album, pos, end, stamp, now, canSeek }
+#   exe is the full path of the running player executable ('' when it is not running).
 #   pos / end are seconds; stamp is when the app last updated pos (Unix ms, 0 = never); now is Unix ms.
 # stdin: play | pause | playpause | next | prev | art <file>  (art saves the current thumbnail)
 # This file is kept ASCII-only: Windows PowerShell reads BOM-less scripts in the system code page.
@@ -71,7 +72,7 @@ function Invoke-Command2([string]$line) {
 }
 
 $readTask = $in.ReadLineAsync()
-$tick = 0; $proc = $false
+$tick = 0; $proc = $false; $exe = ''
 while ($true) {
     while ($readTask.IsCompleted) {
         $line = $readTask.Result
@@ -79,9 +80,14 @@ while ($true) {
         if ($line.Trim()) { Invoke-Command2 $line }
         $readTask = $in.ReadLineAsync()
     }
-    if ($tick % 8 -eq 0) { $proc = [bool](Get-Process -Name $procNames -ErrorAction SilentlyContinue) }
+    if ($tick % 8 -eq 0) {
+        $p0 = Get-Process -Name $procNames -ErrorAction SilentlyContinue | Select-Object -First 1
+        $proc = [bool]$p0
+        $exe = ''
+        if ($p0) { try { $exe = "$($p0.Path)" } catch {} }
+    }
     $tick++
-    $o = [ordered]@{ running = $false; proc = $proc }
+    $o = [ordered]@{ running = $false; proc = $proc; exe = $exe }
     try {
         $s = Find-Session
         if ($s) {

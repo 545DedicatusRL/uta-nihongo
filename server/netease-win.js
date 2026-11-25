@@ -205,6 +205,8 @@ export async function relaunch() {
 export const player = new EventEmitter();
 player.state = { running: false };
 let timer = null, launching = 0, busy = false;
+// autoLaunch：网易云没开时替用户打开它（只用网易云时）。自动模式下不主动打开，没连上时也少试几次（每 2 秒一次）
+let autoLaunch = true, lastTry = 0;
 let lastCover = { pid: '', url: '' };
 
 function emit(s) {
@@ -218,11 +220,15 @@ async function tick() {
   busy = true;
   try {
     if (!ws) {
+      // 没连上时不用每 250ms 都试（每次还要查一遍进程列表）
+      if (Date.now() - lastTry < (autoLaunch ? 1000 : 2000)) return;
+      lastTry = Date.now();
       try { await connect(); }
       catch (e) {
         if (e.code === 'node') return emit({ running: false, err: e.message, errno: 'node' });
         // 网易云开着、但不是带调试端口启动的：需要用户同意重开一次（界面上有按钮）
         if (await isRunning()) return emit({ running: false, errno: 'netease-no-port', err: '网易云不是由唱歌学日语启动的' });
+        if (!autoLaunch) return emit({ running: false });
         // 网易云没开：替用户带着调试端口把它打开（30 秒内只试一次）
         if (Date.now() - launching > 30000) {
           launching = Date.now();
@@ -248,7 +254,8 @@ async function tick() {
   } finally { busy = false; }
 }
 
-export function startWatcher() {
+export function startWatcher({ launch: canLaunch = true } = {}) {
+  autoLaunch = canLaunch;
   if (timer) return;
   timer = setInterval(tick, 250);
   tick();

@@ -47,6 +47,9 @@ function run() {
   }
 }`;
 
+export const NAME = 'Apple Music';
+export const caps = { library: true, queue: true };
+
 export const player = new EventEmitter();
 player.state = { running: false };
 let lastTrack = null;

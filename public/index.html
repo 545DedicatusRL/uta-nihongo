@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="bg"><div id="bg-img"></div></div>
+<div id="bg"><div id="bg-img"></div><div id="bg-mesh" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div>
 
 <div id="app" class="view-apple">
   <header id="topbar">
@@ -264,7 +264,7 @@
 
       <h3>程序</h3>
       <div class="form-row set-player" hidden><span>播放器</span><select id="set-player"></select><button class="btn small" id="set-player-apply" hidden>现在重启</button></div>
-      <p class="muted set-player" hidden>网易云音乐：歌词按歌曲直接对上，能拖动进度；第一次用时程序会重新打开一次网易云（带上读取进度用的调试端口），需要 3.0 或更新的版本。QQ 音乐：要在 QQ 音乐的「设置 → 常规设置 → 通知」里打开「显示系统媒体传输控件（SMTC）」，不能从这里拖动进度。两个都没有资料库和播放列表，在播放器里选歌。</p>
+      <p class="muted set-player" id="set-player-note" hidden></p>
       <div class="form-row"><span>界面窗口</span><select id="set-browser"></select><button class="btn small" id="set-browser-apply" hidden>现在就换</button></div>
       <p class="muted">Chrome、Edge 这类浏览器能把界面开成独立窗口（没有地址栏和标签页）；系统默认浏览器只能当普通标签页打开。</p>
       <div class="form-row"><span>缓存</span><button class="btn" id="set-cache">清除缓存</button><span class="muted" id="set-cache-info"></span></div>
@@ -277,6 +277,12 @@
 <div id="tip" hidden></div>
 <!-- 程序退出后盖在界面上的提示 -->
 <div id="bye" hidden><div><b>唱歌学日语 已退出</b><span>可以关掉这个窗口了。想再用时，双击桌面上的「唱歌学日语」图标。</span></div></div>
+<!-- 自动模式：界面跟着一个播放器时，另一个开始播放了：问要不要换过去 -->
+<div id="follow-pop" role="dialog" aria-labelledby="fp-title" hidden>
+  <b id="fp-title"></b>
+  <span id="fp-track"></span>
+  <div class="fp-acts"><button class="btn" id="fp-stay"></button><button class="btn primary" id="fp-go"></button></div>
+</div>
 <div id="toast" hidden></div>
 <script type="module" src="app.js"></script>
 </body>
