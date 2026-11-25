@@ -1119,6 +1119,8 @@ input[type=checkbox]:checked::before { background: #2a2635; box-shadow: 0 2px 5p
 /* 整体压暗一点，上面的白字才看得清；边角再暗一些 */
 #bg-mesh::after { content: ""; position: absolute; inset: 0; background: radial-gradient(130% 100% at 40% 35%, rgba(10, 8, 18, .18), rgba(10, 8, 18, .5)); }
 @media (prefers-reduced-motion: reduce) { #bg-mesh i { animation: none; } }
+/* 省电（见 app.js 的 frame）：暂停播放时色块停在原地；窗口看不见时所有循环动画都停 */
+.anim-rest #bg-mesh i, .anim-hidden #bg-mesh i, .anim-hidden .dots.idle .dots-g { animation-play-state: paused; }
 
 /* ---------- 有新版本的提示条：顶部栏下面居中，玻璃质感 ---------- */
 #update-bar { position: fixed; top: 66px; left: 50%; translate: -50% 0; z-index: 60; display: flex; align-items: center; gap: 10px;
@@ -1131,6 +1133,10 @@ input[type=checkbox]:checked::before { background: #2a2635; box-shadow: 0 2px 5p
 #update-bar .ub-go { background: #fff; color: #1a1622; border: 0; border-radius: 999px; padding: 5px 14px; font: 600 13px var(--font); cursor: pointer; text-decoration: none; }
 #update-bar .ub-later { background: none; border: 0; color: var(--fg-2); font: 500 13px var(--font); padding: 5px 8px; cursor: pointer; }
 #update-bar .ub-later:hover { color: var(--fg); }
+#update-bar .ub-go:disabled { opacity: .5; cursor: default; }
+#update-bar.busy .ub-go { display: none; }
+#update-bar.busy { padding-right: 18px; }
+#update-bar .ub-text { font-variant-numeric: tabular-nums; }
 
 /* ---------- 自动模式：另一个播放器开始播放时的询问 ---------- */
 #follow-pop {

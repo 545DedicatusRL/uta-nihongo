@@ -4,17 +4,26 @@
 
 介绍网站：<https://raaaaaaayx.github.io/uta-nihongo/>
 
-## 直接下载 Mac App（推荐）
+## 直接安装 Mac App（推荐）
 
-到 [Releases](https://github.com/raaaaaaayx/uta-nihongo/releases/latest) 下载 `uta-nihongo-macOS-arm64.zip`，解压后把「唱歌学日语」拖进「应用程序」文件夹即可。不需要安装 Node.js，也不需要浏览器。
+不需要安装 Node.js，也不需要浏览器。支持 Apple 芯片（M 系列）和 Intel 芯片的 Mac，需要 macOS 13.5 或更新。
 
-- 需要 Apple 芯片（M 系列）的 Mac，macOS 12 或更新
-- 第一次打开时 macOS 会拦下来、提示无法验证开发者（这个 App 没有经过苹果公证），放行一次即可：
+**方法一：一行命令（最省事）**　打开「终端」粘贴运行。会自动认出芯片、下载最新版、放进「应用程序」并打开，第一次打开也不会被系统拦：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/raaaaaaayx/uta-nihongo/main/install-app.sh | bash
+```
+
+**方法二：自己下载**　到 [Releases](https://github.com/raaaaaaayx/uta-nihongo/releases/latest) 下载对应芯片的压缩包：Apple 芯片选 `uta-nihongo-macOS-arm64.zip`，Intel 芯片选 `uta-nihongo-macOS-x64.zip`（不确定的话：左上角苹果标志 → 关于本机）。解压后把「唱歌学日语」拖进「应用程序」。
+
+这样下载的 App 没有经过苹果公证，第一次打开时 macOS 会拦下来、提示无法验证开发者，放行一次即可：
   - **macOS 15 及更新**：先双击打开一次（会被拦），然后到「系统设置 → 隐私与安全性」，往下找到「唱歌学日语」那一行，点 **仍要打开**，输入密码
   - **macOS 14 及更早**：在「应用程序」里 **右键 → 打开**，再点「打开」
   - 或者在「终端」里运行一次：`xattr -dr com.apple.quarantine /Applications/唱歌学日语.app`
-- 每次打开都会检查有没有新版本，有的话顶部会出现提示，点「下载新版」即可
-- 支持 Apple Music 和网易云音乐（在「设置 → 更多设置 → 程序 → 播放器」里切换）
+
+**更新**：每次打开都会检查有没有新版本，有的话顶部会出现提示，点「立即更新」，App 会自己下载、换上新版并重新打开（词汇书和设置都保留）。
+
+支持 Apple Music 和网易云音乐（在「设置 → 更多设置 → 程序 → 播放器」里切换）。
 
 ## 从源码安装
 

@@ -71,6 +71,7 @@ const now = () => (clock.playing ? clock.pos + (performance.now() - clock.at) / 
 function setClock(pos, playing = clock.playing) { clock.pos = pos; clock.at = performance.now(); clock.playing = playing; }
 
 function onState(s) {
+  if (s.bye && s.updating) { es.close(); return; } // 一键更新：App 马上会关掉、换上新版再打开
   if (s.bye) return showBye();
   if (s.focus) return window.focus(); // 点了程序坞图标：程序把浏览器叫到了前面，这里尽量让这个窗口排到最上
   if (s.close) return window.close(); // 界面换到别的浏览器重新打开了：这个窗口自己关掉
@@ -931,10 +932,20 @@ function tick() {
     });
   }
 }
-function frame() {
+// 省电：暂停播放时，流动背景停下来（anim-rest），歌词每 0.25 秒算一次就够（画面基本不变；拖进度条时照常每帧算）。
+// 窗口最小化、被别的窗口完全挡住或切到别的桌面时（document.hidden），所有一直循环的动画都停（anim-hidden）
+let restOn = null, idleAt = 0;
+function frame(ts) {
   requestAnimationFrame(frame);
+  const rest = !clock.playing;
+  if (rest !== restOn) { restOn = rest; document.documentElement.classList.toggle('anim-rest', rest); }
+  if (rest && !S.dragging && ts - idleAt < 250) return;
+  idleAt = ts;
   tick();
 }
+const syncHidden = () => document.documentElement.classList.toggle('anim-hidden', document.hidden);
+document.addEventListener('visibilitychange', syncHidden);
+syncHidden();
 
 // 词典释义按设置的语言取：中文（有道）/ 英文（Jisho）/ 两者
 // 多义词选义项。优先级：
@@ -3277,15 +3288,39 @@ function showUpdate(u) {
   const bar = document.createElement('div');
   bar.id = 'update-bar';
   bar.setAttribute('role', 'status');
-  const act = isApp && (u.download || u.page)
-    ? `<a class="ub-go" href="${esc(u.page)}" target="_blank" rel="noopener">下载新版</a>`
-    : `<button class="ub-go" type="button">复制更新命令</button>`;
+  const link = `<a class="ub-go" href="${esc(u.page)}" target="_blank" rel="noopener">下载新版</a>`;
+  // Mac App：能自己换上新版就给「立即更新」，不能（比如 App 放在写不进去的地方）就打开下载页；浏览器里用的：复制更新命令
+  const act = isApp && u.canInstall ? '<button class="ub-go ub-install" type="button">立即更新</button>'
+    : isApp && (u.download || u.page) ? link
+    : '<button class="ub-go" type="button">复制更新命令</button>';
   bar.innerHTML = `<span class="ub-text">有新版本 <b>v${esc(u.latest)}</b>（当前 v${esc(u.current)}）</span>${act}<button class="ub-later" type="button">以后再说</button>`;
   document.body.append(bar);
   const close = () => { bar.classList.add('leaving'); setTimeout(() => bar.remove(), 220); };
   bar.querySelector('.ub-later').addEventListener('click', () => { try { localStorage.setItem('uta-skip-update', u.latest); } catch {} close(); });
   const go = bar.querySelector('.ub-go');
-  if (go.tagName === 'BUTTON') go.addEventListener('click', async () => {
+  const text = bar.querySelector('.ub-text');
+  if (go.classList.contains('ub-install')) go.addEventListener('click', async () => {
+    go.disabled = true; bar.querySelector('.ub-later').hidden = true;
+    bar.classList.add('busy');
+    text.textContent = '正在下载新版…';
+    const failed = (msg) => {
+      bar.classList.remove('busy');
+      text.textContent = `自动更新没成功：${msg}`;
+      go.outerHTML = link;
+      bar.querySelector('.ub-go').addEventListener('click', () => toast('下载后解压，替换「应用程序」里的旧版即可'));
+      bar.querySelector('.ub-later').hidden = false;
+    };
+    try { await api.post('/api/update/install', {}); } catch (e) { return failed(e.message); }
+    const tick = async () => {
+      let p;
+      try { p = await api.get('/api/update/progress'); } catch { text.textContent = '正在重启…'; return; } // 服务已经退出：在换新版了
+      if (p.phase === 'error') return failed(p.error);
+      text.textContent = p.phase === 'download' ? `正在下载新版 ${p.pct}%` : p.phase === 'unpack' ? '正在核对新版…' : p.phase === 'restart' ? '正在重启…' : '正在准备…';
+      if (p.phase !== 'restart') setTimeout(tick, 400);
+    };
+    tick();
+  });
+  else if (go.tagName === 'BUTTON') go.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(u.install); toast('已复制：粘贴到「终端」里运行，词汇书和设置会保留'); }
     catch { toast(u.install); }
   });
