@@ -695,6 +695,24 @@ function fixNiAdverb(raw) {
   return out;
 }
 
+// ---------------- 歌词里的习惯读法 ----------------
+// 有些词在歌词里几乎不照词典的读音唱：「身体」词典读 しんたい，歌里唱的都是 からだ。歌词源自带的罗马音多半也是机器照词典
+// 标的（同样写着 shintai），所以这一条排在罗马音 / QQ 假名之后：它们给的要是另一个读音（唱的是 み 之类）就听它们的，
+// 给的还是词典读音才换。用户自己的修正仍然排在最后，永远优先。
+// 后面直接跟着汉字词、合成一个术语的不换（身体的、身体検査、身体能力 读 しんたい）；身体中（からだじゅう）这种单个字的照换。
+const LYRIC_READING = { 身体: { from: 'しんたい', to: 'からだ' } };
+function lyricReadings(tokens) {
+  tokens.forEach((tok, ti) => {
+    for (const seg of tok.segs) {
+      const d = LYRIC_READING[seg.t];
+      if (!d || seg.r !== d.from) continue;
+      const next = tokens[ti + 1];
+      if (seg === tok.segs[tok.segs.length - 1] && next && (next.s === '的' || /^[㐀-䶿一-鿿]{2,}/.test(next.s))) continue;
+      seg.r = d.to;
+    }
+  });
+}
+
 // ---------------- 主入口 ----------------
 // lines: [{ t, end, text, zh?, roma?, ct? }]；opts: { kana, meta, userDict }
 export async function analyzeLyrics(lines, opts = {}) {
@@ -742,6 +760,8 @@ export async function analyzeLyrics(lines, opts = {}) {
       }
       const qlist = qq && qq.get(line.text);
       if (qlist) stats.qq += correctWithQQKana(tokens, qlist);
+
+      lyricReadings(tokens);
 
       // 用户修正：全局词典 < 本曲词典 < 具体位置
       tokens.forEach((tok, ti) => tok.segs.forEach((seg, si) => {

@@ -233,8 +233,14 @@ ruby { ruby-align: center; }
    长度都是按注音的字号算的（注音是正文的 .42 倍）；强调时汉字是绕着自己的中下部放大的，顶边会往上顶，注音要多让出这一截 */
 /* 行高要压住，不然这一行会比不拆的时候高：汉字和 .rk 都成了 inline-block，各自带着一整行的行高，
    会把注音往上顶、把整行撑高。字是按基线对齐的，压行高不会让字挪位置 */
-.timed ruby > .ch.fu { line-height: 1; }
-.timed rt.rks { opacity: 1; line-height: .9; }
+/* 没拆开的注音（網 / もう，整个 .seg 一起抬）也摆成同样的结构：汉字是 inline-block、注音包在 .rw 这个 inline-block 里。
+   浏览器摆注音时，对着文字是贴字形、对着 inline-block 是贴盒子，两种结构混在一句里注音就一高一低（差多少还跟字体、字号取整有关）；
+   结构一样就严格对齐了。结构统一后注音整体比不带逐字时间的歌词高一点，由 app.js 的 calibrateRuby 实测出差值，
+   放进 --rks-fix / --rks-top（单位：注音字号的倍数）收回来 */
+.timed ruby > .ch { display: inline-block; line-height: 1; }
+.timed rt { line-height: .9; margin-bottom: calc(var(--rks-fix, 0) * -1em); position: relative; top: calc(var(--rks-top, 0) * 1em); }
+.timed rt > .rw { display: inline-block; }
+.timed rt.rks { opacity: 1; }
 .timed .rk { --p: 0; display: inline-block; color: rgba(255, 255, 255, calc(.4 + .6 * var(--p))); transition: transform var(--lt, .8s) var(--spring, cubic-bezier(.3, .1, .2, 1)); }
 .line.active.timed .rk.on, #f-cur.timed .rk.on { transform: translateY(-.167em); }
 .timed .rk.emon { transform-origin: 50% 100%; scale: calc(1 + .14 * var(--ea, 1) * var(--e, 0));

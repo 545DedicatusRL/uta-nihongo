@@ -553,7 +553,7 @@ function jpHTML(line, li) {
       }
       const whole = ruby && !parts && line.ct?.[c0] ? unit(line.ct[c0][0], (line.ct[ci - 1] || line.ct[c0])[1], c0) : '';
       const cls = `seg${isK ? ' k' : ''}${whole ? ' fu' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
-      inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}${parts ? `<rt class="rks">${rks}</rt>` : `<rt>${esc(seg.r)}</rt>`}</ruby>` : chars}</span>`;
+      inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}${parts ? `<rt class="rks">${rks}</rt>` : `<rt><span class="rw">${esc(seg.r)}</span></rt>`}</ruby>` : chars}</span>`;
     });
     html += `<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
   });
@@ -3208,6 +3208,45 @@ $('#set-quit').addEventListener('click', async () => {
   try { await api.post('/api/quit', {}); } catch (e) { $('#set-quit').disabled = false; return toast(`退出失败：${e.message}`); }
   showBye();
 });
+// ---------- 逐字歌词的注音高度 ----------
+// 逐字歌词里汉字和注音都摆成 inline-block（各自填色、各自抬起，见 jpHTML 和 style.css 的 .timed ruby），
+// 浏览器照盒子而不是照字形来贴注音，注音会比普通歌词里的高出一小截，高多少取决于字体和浏览器。
+// 这里各摆一个量出差值，交给样式收回来（style.css 的 .timed rt）：先用 --rks-fix 把注音往下收（连带把被撑高的这一行收回去），
+// 收不完的零头再用 --rks-top 挪。逐字歌词里所有注音结构相同、收的量也相同，所以彼此总是对齐的。
+function calibrateRuby() {
+  const root = document.documentElement;
+  root.style.removeProperty('--rks-fix');
+  root.style.removeProperty('--rks-top');
+  // 用很大的字来量：差值只有几个像素，浏览器摆的时候会取整，字小了量不准
+  // 结构照着真的歌词行来（.jp > .tok > .seg），外面那几层的行高也会影响注音摆在哪
+  const sample = '<span class="jp"><span class="tok"><span class="seg k fu" style="font-size:120px"><ruby><span class="ch">漢</span><span class="ch">字</span><rt><span class="rw">かんじ</span></rt></ruby></span></span></span>';
+  const make = (cls) => {
+    const box = document.createElement('div');
+    box.className = cls;
+    box.lang = 'ja';
+    box.setAttribute('aria-hidden', 'true');
+    box.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none;white-space:nowrap;animation:none;transition:none';
+    box.innerHTML = sample;
+    ($('#lyrics') || document.body).appendChild(box);
+    return box;
+  };
+  const timed = make('line active timed'), plain = make('line active');
+  const top = (el) => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().top; };
+  const dist = (box) => top(box.querySelector('.ch')) - top(box.querySelector('rt')); // 注音离汉字多远
+  const gap = () => dist(timed) - dist(plain);
+  const fs = parseFloat(getComputedStyle(timed.querySelector('rt')).fontSize) || 0;
+  const d = fs ? gap() : 0;
+  if (Math.abs(d) >= 0.25 && Math.abs(d) < fs) {
+    root.style.setProperty('--rks-fix', (d / fs).toFixed(3));
+    const rest = gap();
+    if (Math.abs(rest) >= 0.25 && Math.abs(rest) < fs) root.style.setProperty('--rks-top', (rest / fs).toFixed(3));
+  }
+  timed.remove();
+  plain.remove();
+}
+calibrateRuby();
+document.fonts?.ready.then(calibrateRuby); // 字体换成真正要用的那个以后再量一次
+
 // 地址里带 ?app=1 的是程序自己打开的界面窗口：告诉服务端，它才知道界面窗口还在不在
 const es = new EventSource(`/api/events${new URLSearchParams(location.search).has('app') ? '?app=1' : ''}`);
 es.onmessage = (e) => onState(JSON.parse(e.data));
