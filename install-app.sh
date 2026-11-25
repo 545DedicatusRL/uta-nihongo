@@ -1,14 +1,14 @@
 #!/bin/bash
 # 唱歌学日语 Mac App — 一行命令安装 / 更新（不需要 Node.js）
 #
-#   curl -fsSL https://raw.githubusercontent.com/raaaaaaayx/uta-nihongo/main/install-app.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/545DedicatusRL/uta-nihongo/main/install-app.sh | bash
 #
 # 按这台 Mac 的芯片（Apple 芯片 / Intel）下载最新发布的 App，放进「应用程序」并打开。
 # 用命令下载的文件不带「来自网上」的隔离标记，所以第一次打开不会被系统以「无法验证开发者」拦下来。
 # 已经装过的话就是更新：只换 App 本身，词汇书、设置和缓存不动。
 set -euo pipefail
 
-REPO="raaaaaaayx/uta-nihongo"
+REPO="545DedicatusRL/uta-nihongo"
 NAME="唱歌学日语"
 DEST="${UTA_APP_DIR:-/Applications}"
 
