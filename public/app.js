@@ -24,6 +24,7 @@ const api = {
 };
 // 当前用的播放器（启动时从 /api/info 取）：Apple Music 或网易云音乐。网易云模式下没有资料库和程序自己的播放队列
 const PLAYER = { id: 'apple', name: 'Apple Music', caps: { library: true, queue: true } };
+const SRC_NAME = { apple: 'Apple Music', netease: '网易云音乐' };
 const control = (cmd, a, b) => api.post('/api/control', { cmd, a, b }).catch((e) => toast(`${PLAYER.name} 没有响应：${e.message}`));
 
 // ---------------- 偏好（存在浏览器里） ----------------
@@ -75,7 +76,8 @@ function onState(s) {
   if (s.close) return window.close(); // 界面换到别的浏览器重新打开了：这个窗口自己关掉
   if ('queue' in s) onQueue(s.queue);
   // 自动模式：现在跟着的是哪个播放器（提示文字里用它的名字）
-  if (s.source && PLAYER.id === 'auto') PLAYER.name = s.source === 'netease' ? '网易云音乐' : 'Apple Music';
+  if (s.source && PLAYER.id === 'auto') PLAYER.name = SRC_NAME[s.source];
+  onOffer(s.offer, s.source);
   S.player = s;
   const playing = s.state === 'playing';
   app.classList.toggle('playing', playing);
@@ -276,9 +278,13 @@ function rgbToHsl(r, g, b) {
   const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [h / 6, s, l];
 }
+// 流动背景的总开关。false：那五团色块整个不显示（连它们一直在跑的动画一起停掉），
+// 背景回到原来的样子（模糊的封面）；想再打开改回 true 就行
+const FX_MESH = false;
+$('#bg-mesh').hidden = !FX_MESH;
 let meshUrl = '';
 async function paintMesh(url) {
-  if (url === meshUrl) return;
+  if (!FX_MESH || url === meshUrl) return;
   meshUrl = url;
   const mesh = $('#bg-mesh');
   let pal;
@@ -781,14 +787,20 @@ function glide(change, pivot = S.active) {
   const far = clamp(elScroll.scrollTop - scroll0, -H * 0.5, H * 0.5); // 之前不在视野里的行（比如拖了进度）：从不远处滑进来
   const a = Math.max(pivot, 0);
   const up = elScroll.scrollTop >= scroll0;
+  const moves = [];
   for (let k = Math.min(lo1, lo2); k <= Math.max(hi1, hi2); k++) {
     if (k > hi2 + 2 || k < lo2 - 2) continue; // 换完以后看不见的行不用动
     const el = els[k];
     const d = before.has(k) ? before.get(k) - el.getBoundingClientRect().top : far;
     if (Math.abs(d) < 0.5) continue;
     // 往上走时，当前行以上的一起先走，下面的行一行比一行晚；往回走时反过来
-    const lag = Math.min(Math.max(0, up ? k - a : a - k), 9) * 38;
-    glideAnims.push(el.animate([{ translate: `0 ${d.toFixed(1)}px` }, { translate: '0 0' }], { duration: SPRING.ms, delay: lag, easing: SPRING.easing, fill: 'backwards' }));
+    moves.push([el, d, Math.min(Math.max(0, up ? k - a : a - k), 9) * 38]);
+  }
+  // 最早动的那一行不等：要动的行全都离 pivot 很远时（自己划到后面去了），每一行算出来都是最长的那个延迟，
+  // 结果是整屏先愣一下才一起动。减掉其中最小的，错开的节奏不变，只是不白等
+  const wait = Math.min(...moves.map((m) => m[2]));
+  for (const [el, d, lag] of moves) {
+    glideAnims.push(el.animate([{ translate: `0 ${d.toFixed(1)}px` }, { translate: '0 0' }], { duration: SPRING.ms, delay: lag - wait, easing: SPRING.easing, fill: 'backwards' }));
   }
 }
 function scrollToActive(instant) {
@@ -1193,6 +1205,7 @@ document.addEventListener('mouseover', (e) => {
 // ---------------- 点击歌词：跳转 / 敲击对齐 / 辞书选择 / 改读音 ----------------
 let popClosedAt = -1e9; // 上一次因为点到外面而关掉读音小窗的时刻
 let dismissClick = false; // 刚按下的这一下鼠标把资料库 / 词汇书收起来了
+let dismissSeek = false; // 刚按下的这一下把资料库 / 词汇书 / 菜单 / 时间对齐的面板收起来了：它只管收起，不算点了底下的歌词
 function seekTo(sec) {
   sec = Math.max(0, sec);
   S.jumped = true; // 自己跳的：哪怕只跳了一点点（点了紧挨着的下一句），也不算「唱过来的」
@@ -1208,6 +1221,7 @@ document.addEventListener('click', (e) => {
   // 修改模式同理：点在词或标注上是修改；点在这一行的其他地方跳到这一句
   if (S.mode === 'edit' && (inFocus || e.target.closest('#f-ann') || (lineEl && e.target.closest('.tok, .chip')))) return editClick(e);
   if (performance.now() - popClosedAt < 400) return; // 这一下是为了关掉读音小窗，不算点歌词
+  if (dismissSeek) return; // 这一下是为了收起资料库 / 词汇书 / 菜单这些，不跳到点中的那一句
   const near = e.target.closest('#f-prev, #f-next, .k-line'); // 大字视图里的上一句 / 下一句；KTV 样式里的两行
   // 敲击对齐时，大字样式里中间那句大字也能点（= 正在显示的这一句现在开始唱）；平时点它没有反应
   const i = lineEl ? +lineEl.dataset.i : near && near.dataset.i !== '' ? +near.dataset.i : inFocus && S.tapAlign ? S.active : -1;
@@ -1270,7 +1284,7 @@ function setMode(mode) {
       const el = elScroll.children[k], r = el.getBoundingClientRect();
       if (S.lines[k]?.gap || !r.height) continue;
       const d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0; // 离屏幕四成高的那条线最近的一句
-      if (d < best) { best = d; anchor = { el, top: r.top }; }
+      if (d < best) { best = d; anchor = { el, top: r.top, i: k }; }
     }
   }
   if (anchor) armReturn();
@@ -1286,7 +1300,7 @@ function setMode(mode) {
     paintAnnotations();
     if (anchor) elScroll.scrollTop += anchor.el.getBoundingClientRect().top - anchor.top;
     else jumpToActive();
-  });
+  }, anchor ? anchor.i : S.active); // 认准了眼前的一句时，周围的行以它为中心错开，而不是以（可能离得很远的）正在唱的那句
 }
 function resumeIfPausedByDict() {
   if (S.pausedByDict) { S.pausedByDict = false; control('play'); }
@@ -2247,16 +2261,23 @@ function reorderVocab() {
   box.append(...list.map((v) => cards.get(v.id)));
   for (const [id, el] of cards) el.classList.toggle('veil', veiled(id));
   if (still) return;
+  // 只给换完之后看得见的那几张做动画（一屏最多四张，上下各多带一张，一共不超过 VMOVE_MAX 张）。
+  // 词多了以后要是每张都滑，几十张玻璃卡片一起横穿整个列表，又乱又卡；
+  // 换走的那些不滑出去（它们的新位置在看不见的地方），直接到位
   const view = box.getBoundingClientRect();
-  const inView = (y, h) => y + h > view.top - 80 && y < view.bottom + 80;
   let n = 0;
   for (const v of list) {
-    const el = cards.get(v.id), r = el.getBoundingClientRect(), from = before.get(v.id);
-    if (Math.abs(from - r.top) < 1 || (!inView(r.top, r.height) && !inView(from, r.height))) continue; // 没动的、全程看不见的不用动画
+    const el = cards.get(v.id), r = el.getBoundingClientRect();
+    if (r.bottom <= view.top - 80) continue;
+    if (r.top >= view.bottom + 80 || n >= VMOVE_MAX) break; // 卡片是从上往下排的，再往后都在更下面
+    // 原来在很远的地方的：从列表边缘外面一点滑进来，不用真的从几千像素外飞过来
+    const from = Math.max(view.top - r.height - 40, Math.min(view.bottom + 40, before.get(v.id)));
+    if (Math.abs(from - r.top) < 1) continue;
     el.animate([{ translate: `0 ${(from - r.top).toFixed(1)}px` }, { translate: '0 0' }],
-      { id: 'vmove', duration: SPRING.ms, easing: SPRING.easing, delay: Math.min(n++, 10) * 22, fill: 'backwards' });
+      { id: 'vmove', duration: SPRING.ms, easing: SPRING.easing, delay: n++ * 22, fill: 'backwards' });
   }
 }
+const VMOVE_MAX = 6;
 const shuffledIds = () => {
   const ids = vocabList.map((v) => v.id);
   for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
@@ -2330,9 +2351,14 @@ $('#vocab-list').addEventListener('click', async (e) => {
       { opacity: 0, height: '0px', marginTop: '0px', marginBottom: '0px', paddingTop: '0px', paddingBottom: '0px', borderWidth: '0px' },
     ], { duration: 240, easing: 'cubic-bezier(.3, .75, .2, 1)', fill: 'forwards' }).onfinish = renderVocab;
   } else if (v) {
-    if (S.track?.pid !== v.song?.pid) {
-      if (!v.song?.pid) return toast('这首歌不在资料库里，无法直接播放');
-      await control('playTrack', v.song.pid);
+    const pid = v.song?.pid || '', ne = pid.startsWith('ne-');
+    if (S.track?.pid !== pid) {
+      if (!pid) return toast('这首歌不在资料库里，无法直接播放');
+      // 只连着一个播放器的模式下，另一个播放器里记的词没法从这里播
+      if (PLAYER.id !== 'auto' && ne !== (PLAYER.id === 'netease')) return toast(`这个词是在${ne ? '网易云音乐' : ' Apple Music '}里记的，现在的播放器设置下不能从这里播放`);
+      // 网易云的歌：点播和「跳到这一句」一起交给它，它要等真的换到这首歌才能跳（见 netease.js 的 playTrack）
+      if (ne) return api.post('/api/control', { cmd: 'playTrack', a: pid, b: v.lineTime || 0 }).catch((err) => toast(err.message));
+      await control('playTrack', pid);
       await new Promise((r) => setTimeout(r, 900));
     } else if (S.player?.state !== 'playing') control('play');
     seekTo((v.lineTime || 0) + S.offset);
@@ -2579,7 +2605,8 @@ function toggleMenu(open = $('#menu').hidden) {
 $('#btn-menu').addEventListener('click', () => toggleMenu());
 $('#btn-dict').addEventListener('click', () => setMode('dict'));
 $('#btn-edit').addEventListener('click', () => { toggleMenu(false); setMode('edit'); });
-$('#btn-library').addEventListener('click', openLibrary);
+// 资料库按钮是开关：开着的时候再点一下收起（和词汇书按钮一样）
+$('#btn-library').addEventListener('click', () => { if ($('#library').hidden) openLibrary(); else $('#library').hidden = true; });
 // 词汇书按钮和「记词」一样是开关：点一下打开（按钮亮起），再点一下关上
 $('#btn-vocab').addEventListener('click', () => {
   if (!$('#vocab').hidden) { $('#vocab').hidden = true; return; }
@@ -2603,17 +2630,18 @@ $('#btn-offset').addEventListener('click', () => {
 $$('[data-close]').forEach((b) => b.addEventListener('click', () => { b.closest('.drawer, .modal').hidden = true; }));
 $$('.modal').forEach((m) => m.addEventListener('mousedown', (e) => { if (e.target === m) m.hidden = true; }));
 document.addEventListener('mousedown', (e) => {
+  dismissSeek = false;
   dismissClick = false; // 这一下是不是只用来收起什么东西（或者根本不该有反应），而不算点了底下的封面：见封面的点击
   if (!$('#offset-pop').hidden && !e.target.closest('#offset-pop, #btn-offset')) {
     // 时间对齐的面板开着时点到封面：不切换样式。和记词 / 修改模式一个道理，正对着歌词敲，手一滑点到封面不该把样式换了
     if (e.target.closest('#art-wrap')) dismissClick = true;
     // 敲击对齐开着时，点歌词是在对齐，不算「点到面板外面」，面板留着方便多敲几次；点到封面也不算，什么都不发生
-    if (!(S.tapAlign && e.target.closest('#lyrics, #focus, #ktv, #art-wrap'))) $('#offset-pop').hidden = true;
+    if (!(S.tapAlign && e.target.closest('#lyrics, #focus, #ktv, #art-wrap'))) { $('#offset-pop').hidden = true; dismissSeek = true; }
   }
-  if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) toggleMenu(false);
+  if (!$('#menu').hidden && !e.target.closest('#menu, #btn-menu')) { toggleMenu(false); dismissSeek = true; }
   if (!$('#reading-pop').hidden && !e.target.closest('#reading-pop, .seg.k')) { $('#reading-pop').hidden = true; popClosedAt = performance.now(); }
   // 这一下是用来收起资料库 / 词汇书的：它只管收起
-  for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) { $(`#${id}`).hidden = true; dismissClick = true; }
+  for (const id of ['library', 'vocab']) if (!$(`#${id}`).hidden && !e.target.closest(`#${id}, #topbar, #toast`)) { $(`#${id}`).hidden = true; dismissClick = dismissSeek = true; }
 });
 
 $('#btn-play').addEventListener('click', () => control('playpause'));
@@ -2714,6 +2742,7 @@ applyKeys();
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    if (!$('#follow-pop').hidden) return answerOffer(false);
     hideSensePop();
     const open = $$('.modal, .drawer, .popover').filter((el) => !el.hidden);
     if (open.length) { open.forEach((el) => { el.hidden = true; }); $('#btn-menu').classList.remove('on'); }
@@ -2729,6 +2758,30 @@ addEventListener('resize', () => { scrollToActive(true); fitKtv(); });
 
 let toastTimer = 0;
 // action = { label, run }：提示后面带一个按钮（比如「撤销」），这时提示多留几秒
+// 自动模式：界面跟着一个播放器时另一个开始播放，程序不自己换过去，而是带一条 offer 过来，这里弹窗问。
+// 同一条只弹一次（答过之后、程序收到回答之前，还会有带着它的状态推过来）；对方停了，这一条撤回，弹窗跟着收起
+let offerKey = '';
+const withName = (pre, name, post = '') => `${pre}${/^[\w]/.test(name) && pre ? ' ' : ''}${name}${/[\w]$/.test(name) && post ? ' ' : ''}${post}`;
+function onOffer(o, cur) {
+  const el = $('#follow-pop');
+  if (!o) { offerKey = ''; el.hidden = true; return; }
+  $('#fp-track').textContent = [o.name, o.artist].filter(Boolean).join(' · '); // 对方换歌了，歌名跟着换
+  const key = `${o.source}|${o.at}`;
+  if (key === offerKey) return;
+  offerKey = key;
+  $('#fp-title').textContent = withName('', SRC_NAME[o.source], '正在播放');
+  $('#fp-go').textContent = withName('切换到', SRC_NAME[o.source]);
+  $('#fp-go').dataset.src = o.source;
+  $('#fp-stay').textContent = withName('留在', SRC_NAME[cur] || PLAYER.name);
+  el.hidden = false;
+}
+function answerOffer(go) {
+  $('#follow-pop').hidden = true;
+  control(go ? 'follow' : 'stay', go ? $('#fp-go').dataset.src : '');
+}
+$('#fp-go').addEventListener('click', () => answerOffer(true));
+$('#fp-stay').addEventListener('click', () => answerOffer(false));
+
 function toast(msg, action) {
   const el = $('#toast');
   el.textContent = msg;
@@ -2919,6 +2972,9 @@ function morphView(to) {
   };
   // 之前
   const a0 = rect(artEl), rad0 = px(artEl, 'borderTopLeftRadius'), sh0 = getComputedStyle(artEl).boxShadow, m0 = rect(metaEl), f0 = px($('#title'), 'fontSize');
+  // 封面自己可能带着缩放：滚动样式下暂停时它会缩小（style.css 里写在 transform 上），大字样式下鼠标悬停时会放大。
+  // k0 = 它现在看上去是排版尺寸的多少倍，折算圆角和阴影时要用
+  const k0 = a0.width / (artEl.offsetWidth || a0.width);
   const oldLine = toScroll ? cur : elScroll.children[a];
   let t0 = S.lines[a] && !S.lines[a].gap && oldLine ? measure(oldLine) : null;
   if (t0?.[0] && !toScroll) { const box = rect($('#lyrics')); if (t0[0].r.bottom < box.top || t0[0].r.top > box.bottom) t0 = null; } // 自己划走了、当前句不在屏幕上：这一句不飞
@@ -2946,6 +3002,9 @@ function morphView(to) {
   };
   const landed = performance.now() + MORPH.ms;
   document.addEventListener('mousemove', morphHover);
+  // 换样式的这一下，封面自带的那个缩放直接到位，不走它自己的过渡（滚动样式下 transform 上挂着 0.7 秒带回弹的过渡）：
+  // 不然量到的是过渡刚起步时的位置，飞到那里以后它还要再缩一截
+  artEl.style.transition = 'none';
   prefs.view = to; savePrefs(); applyPrefs();
   clearTimeout(freeTimer); elScroll.classList.remove('free');
   for (const an of glideAnims) an.cancel();
@@ -2959,10 +3018,14 @@ function morphView(to) {
   const a1 = rect(artEl), m1 = rect(metaEl), f1 = px($('#title'), 'fontSize'), s = a0.width / a1.width;
   const opt = { duration: MORPH.ms, easing: MORPH.easing };
   const optT = { ...opt, fill: 'both' }; // 飞着的字、标注线：飞完停在落点上，等真的那一句换上来
+  requestAnimationFrame(() => { artEl.style.transition = ''; }); // 位置量完了（上面那行已经按「直接到位」算过样式），过渡还回去
   artEl.style.zIndex = 3;
+  // 用 translate / scale，不碰 transform：封面自带的缩放写在 transform 上，两样叠在一起，落地时正好就是它该有的样子。
+  // 两样都是绕着封面的中心缩放的，所以平移按中心点算。f = 起步时封面一共被放大 / 缩小了多少倍，圆角和阴影按它折算回去
+  const w1 = artEl.offsetWidth || a1.width, f = a0.width / w1 / k0;
   artEl.animate([
-    { transformOrigin: '0 0', transform: `translate(${a0.left - a1.left}px, ${a0.top - a1.top}px) scale(${s})`, borderRadius: `${rad0 / s}px`, boxShadow: scalePx(sh0, s) },
-    { transformOrigin: '0 0', transform: 'none', borderRadius: `${px(artEl, 'borderTopLeftRadius')}px`, boxShadow: getComputedStyle(artEl).boxShadow },
+    { translate: `${a0.left + a0.width / 2 - a1.left - a1.width / 2}px ${a0.top + a0.height / 2 - a1.top - a1.height / 2}px`, scale: s, borderRadius: `${rad0 / f}px`, boxShadow: scalePx(sh0, f) },
+    { translate: '0 0', scale: 1, borderRadius: `${px(artEl, 'borderTopLeftRadius')}px`, boxShadow: getComputedStyle(artEl).boxShadow },
   ], opt).onfinish = () => { artEl.style.zIndex = ''; };
   metaEl.animate([{ transformOrigin: '0 0', transform: `translate(${m0.left - m1.left}px, ${m0.top - m1.top}px) scale(${f0 / f1})` }, { transformOrigin: '0 0', transform: 'none' }], opt);
   const fadeOut = (el) => el.animate([{}, { opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
@@ -3136,7 +3199,7 @@ function animateHidden(el, leaveMs, wrap = (f) => f()) {
     },
   });
 }
-for (const [sel, ms] of [['#vocab', 280], ['#queue', 280], ['#library', 280], ['#settings-modal', 240], ['#source-modal', 240], ['#menu', 180]]) animateHidden($(sel), ms);
+for (const [sel, ms] of [['#vocab', 280], ['#queue', 280], ['#library', 280], ['#settings-modal', 240], ['#source-modal', 240], ['#menu', 180], ['#follow-pop', 200]]) animateHidden($(sel), ms);
 animateHidden($('#dictbar'), 260, (change) => flip(playerParts(), change));
 
 // ---------------- 启动 ----------------

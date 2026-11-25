@@ -749,7 +749,8 @@ input, select, textarea { accent-color: var(--accent); caret-color: var(--accent
 
 /* ---------- 顶栏 ---------- */
 #topbar { gap: 10px; padding: 14px 18px 8px; }
-.mac-app #topbar { padding-left: 86px; }
+/* macOS App：顶部栏排在红黄绿按钮右边，并和它们对齐在同一条中线上（位置由外壳量好传进来；17.75px 是这一行按钮高度的一半） */
+.mac-app #topbar { padding-left: calc(var(--tl-end, 72px) + 20px); padding-top: max(6px, calc(var(--tl-cy, 31.75px) - 17.75px)); }
 .pill { padding: 7px 15px; color: var(--fg); font-weight: 500; transition: background .2s, transform .2s cubic-bezier(.3, .75, .2, 1); }
 .pill:hover { background: var(--lg-fill-2); }
 .pill:active, .btn:active, .seg-btn:active { transform: scale(.96); }
@@ -778,7 +779,7 @@ input, select, textarea { accent-color: var(--accent); caret-color: var(--accent
 #progress::before { background: rgba(255, 255, 255, .22); }
 #progress-fill { border-radius: 999px; background: rgba(255, 255, 255, .9); }
 #progress:hover::before, #progress:hover #progress-clip { height: 8px; transition: height .2s; }
-#src-badge { border-radius: 999px; padding: 1px 9px; background: var(--lg-fill); }
+#src-badge { border-radius: 6px; padding: 1px 9px; background: var(--lg-fill); } /* 小圆角的方块，不做成胶囊：和 Apple Music 里「Hi-Res Lossless」那个标记一个样子 */
 #controls button:hover { background: var(--lg-fill); }
 :is(.view-focus, .view-ktv) #art-wrap { border-radius: 8px; }
 
@@ -903,7 +904,9 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border: 0; bord
 .form-row > span:first-child { width: 112px; color: var(--fg); font-weight: 500; }
 .modal-body .form-row .muted { font-size: 12px; }
 .keys { padding: 8px 16px; border-radius: 16px; background: rgba(255, 255, 255, .065); gap: 0 26px; }
-.keys + .form-row { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: -1px; box-shadow: inset 0 .5px 0 var(--lg-line); }
+/* 快捷键列表和它下面那一行说明是同一块：下面那行不要自己的上圆角，也不要自己再起一道高光（见后面给 .form-row 加的那层渐变），
+   不然看着是两张卡片叠着。选择器前面带上 .modal-body，才压得过上面「前一个不是 .form-row 的就给上圆角」那条 */
+.modal-body .keys + .form-row { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: 0; box-shadow: none; }
 .keys:has(+ .form-row) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .key-row { padding: 6px 0; }
 .key-btn { border-radius: 8px; padding: 3px 10px; font-variant-numeric: tabular-nums; }
@@ -989,6 +992,7 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border: 0; bord
 .vcard { box-shadow: inset 1px 1px 0 -.5px rgba(255, 255, 255, .32), inset 0 0 0 .5px rgba(255, 255, 255, .12), 0 6px 20px rgba(0, 0, 0, .12); }
 .vcard:hover { background-color: rgba(255, 255, 255, .12); }
 .modal-body .form-row, .keys { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.modal-body .keys + .form-row { background-image: none; } /* 和上面的快捷键列表连成一块：高光只在列表那里起一次 */
 /* 弹窗后面：轻轻压暗、不糊掉，玻璃才看得出是玻璃 */
 .modal { background: rgba(8, 6, 14, .22); -webkit-backdrop-filter: none; backdrop-filter: none; }
 /* 输入框：凹进去的一块透明玻璃 */
@@ -998,8 +1002,8 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
   background-repeat: no-repeat; background-position: right 12px center; background-size: 11px auto; padding-right: 32px; }
 /* 抽屉从顶栏下面开始：玻璃是透明的，压在顶栏按钮上会和标题叠在一起 */
 .drawer, .mac-app .drawer.left { top: 62px; }
-/* 设置 / 歌词来源：字多，玻璃比抽屉稍深一点 */
-.modal-card { background-color: rgba(22, 20, 32, .42); }
+/* 设置 / 歌词来源：字多、字小，底色要深到后面的歌词不干扰阅读（.42 时大字歌词透上来，和设置项叠在一起看不清） */
+.modal-card { background-color: rgba(22, 20, 32, .84); }
 
 /* ---------- 不要白色描边：去掉玻璃边缘那一圈白线，只留透明、模糊和表面的反光 ---------- */
 :root { --lg-edge: inset 0 0 24px rgba(255, 255, 255, .05); }
@@ -1127,3 +1131,21 @@ input[type=checkbox]:checked::before { background: #2a2635; box-shadow: 0 2px 5p
 #update-bar .ub-go { background: #fff; color: #1a1622; border: 0; border-radius: 999px; padding: 5px 14px; font: 600 13px var(--font); cursor: pointer; text-decoration: none; }
 #update-bar .ub-later { background: none; border: 0; color: var(--fg-2); font: 500 13px var(--font); padding: 5px 8px; cursor: pointer; }
 #update-bar .ub-later:hover { color: var(--fg); }
+
+/* ---------- 自动模式：另一个播放器开始播放时的询问 ---------- */
+#follow-pop {
+  position: fixed; left: 0; right: 0; top: 78px; z-index: 55; margin: 0 auto; width: fit-content; min-width: 300px; max-width: min(440px, calc(100vw - 24px));
+  display: grid; gap: 3px; padding: 16px 18px 16px; border-radius: var(--r-lg); text-align: center;
+  /* 和菜单、抽屉同一块玻璃：透明的底色 + 表面的反光 + 后面的东西模糊压暗 */
+  background: var(--lg-panel) var(--lg-sheen); -webkit-backdrop-filter: var(--lg-blur-strong); backdrop-filter: var(--lg-blur-strong);
+  box-shadow: var(--lg-edge), var(--lg-shadow); text-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  animation: fp-in .3s cubic-bezier(.2, .8, .2, 1) both;
+}
+#follow-pop.leaving { animation: fp-out .2s var(--ease-in) both; pointer-events: none; }
+#fp-title { font: 650 15px/1.4 var(--font); }
+#fp-track { font: 13px/1.4 var(--font-ja); opacity: .68; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-acts { display: flex; gap: 8px; margin-top: 11px; }
+.fp-acts .btn { flex: 1; }
+@keyframes fp-in { from { opacity: 0; transform: translateY(-10px) scale(.97); } }
+@keyframes fp-out { to { opacity: 0; transform: translateY(-8px) scale(.97); } }
+@media (prefers-reduced-motion: reduce) { #follow-pop { animation: none; } }

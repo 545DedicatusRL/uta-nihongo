@@ -548,6 +548,32 @@ function restoreSpelling(tokens, text) {
   }
 }
 
+// ---------------- たまに ----------------
+// 假名写的这几个副词，分词器常切成「名词 + に」：たまには → たま（玉）+ に + は，やけに → やけ（自棄）+ に，
+// じきに → じき + に，ふいに → ふい（吹く）+ に。后面跟着的词不同切法还会变（たまにキミ 对、たまにココロ 错），查到的是不相干的词。
+// 歌词里假名的「たま」后面跟「に」几乎都是「偶尔」，所以合回副词。只收这几个在曲库歌词里核对过的：
+// 同样长相的「いたずらに」歌词里多半是「悪戯に」（淘气地），词典里的副词却是「徒に」（白白地），那种不能合。
+// 不合的情况：前面有修饰它的词（…のたまに、このたまに）——那它是名词；「やけになる」是「自暴自弃」，也是名词；
+// 「つまはじきに」是「爪弾き」被切成了 つま + は + じき。
+const NI_ADVERB = { たま: 'タマニ', やけ: 'ヤケニ', じき: 'ジキニ', ふい: 'フイニ' };
+function fixNiAdverb(raw) {
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    const t = raw[i], next = raw[i + 1], prev = raw[i - 1];
+    const r = NI_ADVERB[t.surface_form];
+    const modified = prev && (prev.pos === '連体詞' || (prev.pos === '助詞' && prev.pos_detail_1 === '連体化'));
+    const ok = r && next && next.surface_form === 'に' && next.pos === '助詞'
+      && (t.pos === '名詞' || (t.surface_form === 'ふい' && t.pos === '動詞'))
+      && !modified && !(t.surface_form === 'やけ' && raw[i + 2]?.basic_form === 'なる')
+      && !(t.surface_form === 'じき' && prev?.surface_form === 'は' && raw[i - 2]?.surface_form === 'つま');
+    if (!ok) { out.push(t); continue; }
+    const w = t.surface_form + 'に';
+    out.push({ ...t, surface_form: w, basic_form: w, pos: '副詞', pos_detail_1: '一般', pos_detail_2: '*', pos_detail_3: '*', conjugated_type: '*', conjugated_form: '*', reading: r, pronunciation: r, word_type: 'KNOWN' });
+    i++; // 后面的 に 已经并进来了
+  }
+  return out;
+}
+
 // ---------------- 主入口 ----------------
 // lines: [{ t, end, text, zh?, roma?, ct? }]；opts: { kana, meta, userDict }
 export async function analyzeLyrics(lines, opts = {}) {
@@ -561,7 +587,7 @@ export async function analyzeLyrics(lines, opts = {}) {
     stats,
     lines: lines.map((line) => {
       const modern = modernSpelling(tokenizer, line.text);
-      const raw = fixIta(fixSuru(fixMitai(tokenizer.tokenize(modern))));
+      const raw = fixNiAdverb(fixIta(fixSuru(fixMitai(tokenizer.tokenize(modern)))));
       const tails = tailFlags(raw);
       let i0 = 0;
       const tokens = raw.map((t, ri) => {
