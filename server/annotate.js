@@ -23,6 +23,7 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 
 const toHira = (s) => String(s || '').replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
 const hasKanji = (s) => /[㐀-䶿一-鿿々〆]/.test(s);
+const isKata = (s) => /^[ァ-ヶー]+$/.test(s) && /[ァ-ヶ]/.test(s);
 
 // 读音只比假名：片假名当平假名，中间的点、空格之类不算
 const normR = (r) => toHira(r).replace(/[^ぁ-ゖー]/g, '');
@@ -186,6 +187,7 @@ async function jisho(word) {
       r: jp.reading || '',
       lv: levels.length ? `N${Math.max(...levels)}` : '',
       common: !!d.is_common,
+      uk: kanaWord(d) ? 1 : 0, // 平常只写假名（或者根本没有汉字写法）
       en: d.senses.slice(0, 3).map((s) => s.english_definitions.slice(0, 3).join(', ')),
       pos: (d.senses[0]?.parts_of_speech || []).slice(0, 2),
       // 同一个词的其他写法（常用写法排在前面），查中文释义时用来回退
@@ -345,6 +347,30 @@ export async function lookupWords(words, onlyCached = false) {
     if (!onlyCached && (!e2 || stale(e2, dv.h, dv.w))) more.set(dv.w, more.get(dv.w) || !e2 || e2.zhs !== undefined);
   }
   if (more.size) await fill([...more]);
+  // 片假名写的词：歌词常把和语词写成片假名（ココロ、ナミダ），照片假名查不到，或者查到的是另一个不相干的词
+  // （アイ：查到的是字母 I / eye，其实是「愛」；ウソ：查到的是一种鸟，其实是「嘘」）。这时再按平假名查一次：
+  //   - 照片假名查不到 → 用平假名查到的（太生僻的不算，见下面）；
+  //   - 两边都有 → 默认信片假名的那条（サイコ = psycho，不是「最古」）。只有片假名那条不是常用词、
+  //     而平假名那条是有级别的基础词、而且平常是写汉字的（アイ → 愛、ソラ → 空、ウソ → 嘘）才换成平假名的。
+  //     平常就写假名的词（だいぶ）不换：真想写它不会特意写成片假名，ダイブ 还是 dive；
+  //   - 没选上的那一边作为候选一起给界面：界面会按这一行的中文翻译自动挑，也可以手动改选。
+  // 片假名那条本身就是常用词的（テレビ、キス、ママ）不用再查。
+  const kata = new Map();
+  const more2 = new Map();
+  for (const { key, w } of keys) {
+    const e = c[w];
+    if (!isKata(w) || !e || e.zhs === undefined || !(e.miss || !e.common)) continue;
+    const hw = toHira(w);
+    kata.set(key, hw);
+    const e2 = c[hw];
+    // 「平常写不写汉字」（uk）是后来才存的：两边都有、要靠它来定的时候，旧缓存里没有就重新查这一个词
+    const need = !e2 || stale(e2, '', hw) || (!e.miss && !e2.miss && e2.uk === undefined);
+    if (!onlyCached && need) more2.set(hw, more2.get(hw) || !e2 || e2.zhs !== undefined);
+  }
+  if (more2.size) await fill([...more2]);
+  // 查过了还是没有这个标记的（Jisho 里没有、只有中文词典里有的词）：记成「不知道 = 不换」，免得每次都重查
+  for (const hw of more2.keys()) { const x = c[hw]; if (x && x.uk === undefined) { x.uk = 1; dirty = true; } }
+  const asHoms = (e) => (e.miss ? [] : [e, ...(e.kv ? e.more || [] : [])]).filter((m) => m.zh || m.en?.length).map((m) => ({ w: m.w, r: m.r, lv: m.lv, zh: m.zh || '', zhs: m.zhs || [], en: m.en || [] }));
   for (const { key, w, h } of keys) {
     const e = c[w];
     if (!e) continue;
@@ -355,6 +381,17 @@ export async function lookupWords(words, onlyCached = false) {
     const homs = e.kv ? (e.more || []).filter((m) => m.zh || m.en?.length).map((m) => ({ w: m.w, r: m.r, lv: m.lv, zh: m.zh || '', zhs: m.zhs || [], en: m.en || [] })) : [];
     if (homs.length) out[key] = { ...out[key], homs };
     if (old && onlyCached) out[key] = { ...out[key], stale: 1 };
+    const hw = kata.get(key);
+    if (hw) {
+      const e2 = c[hw];
+      if (e2 && e2.zhs !== undefined && !e2.miss) {
+        // 照片假名查不到时也不是什么都收：平假名那条得是常用词、有级别，或者平常就写假名（よすが）；
+        // 生僻的汉字词（フロウ → 不老）多半只是碰巧同音，宁可不显示
+        const native = e.miss ? (e2.common || !!e2.lv || e2.uk !== 0) : (!e.common && e2.common && !!e2.lv && e2.uk === 0);
+        if (native) out[key] = { ...withFix(w, withFix(hw, select(e2, ''))), homs: [...asHoms(e2).slice(1), ...asHoms(e)], kana: hw };
+        else out[key] = { ...out[key], homs: [...(out[key].homs || []), ...asHoms(e2)] };
+      } else if (onlyCached && (!e2 || e2.zhs === undefined)) out[key] = { ...out[key], stale: 1 }; // 平假名那边还没查过：联网后再补
+    }
     const dv = via.get(key);
     if (!dv) continue;
     const e2 = c[dv.w];
