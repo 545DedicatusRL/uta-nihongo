@@ -278,13 +278,20 @@ function rgbToHsl(r, g, b) {
   const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [h / 6, s, l];
 }
-// 流动背景的总开关。false：那五团色块整个不显示（连它们一直在跑的动画一起停掉），
-// 背景回到原来的样子（模糊的封面）；想再打开改回 true 就行
-const FX_MESH = false;
-$('#bg-mesh').hidden = !FX_MESH;
-let meshUrl = '';
+// 流动背景：设置 →「动画 → 流动背景」里开关，默认关。关着的时候那五团色块整个不显示（连它们一直在跑的动画一起停掉），
+// 背景是原来的样子（模糊的封面）
+const fxMesh = () => !!prefs.fxMesh;
+let meshUrl = '', meshWant = ''; // meshWant：当前封面，开关打开时拿它上色
+function setFxMesh(on) {
+  const mesh = $('#bg-mesh');
+  mesh.hidden = !on;
+  meshUrl = '';
+  if (on) { if (meshWant) paintMesh(meshWant); } else { mesh.classList.remove('on'); $('#bg').classList.remove('meshed'); }
+}
+$('#bg-mesh').hidden = !fxMesh();
 async function paintMesh(url) {
-  if (!FX_MESH || url === meshUrl) return;
+  meshWant = url;
+  if (!fxMesh() || url === meshUrl) return;
   meshUrl = url;
   const mesh = $('#bg-mesh');
   let pal;
@@ -2412,6 +2419,7 @@ async function openSettings() {
   $('#set-fx-hold').checked = !!prefs.fxHold;
   $('#set-fx-group').checked = !!prefs.fxGroup;
   $('#set-less-motion').checked = !!prefs.lessMotion;
+  $('#set-fx-mesh').checked = !!prefs.fxMesh;
   const picked = Object.keys(S.senses || {}).length;
   $('#set-clear-senses').hidden = !picked;
   $('#set-clear-senses').textContent = `清除这首歌里手动选的 ${picked} 个`;
@@ -2458,6 +2466,7 @@ $('#set-clear-senses').addEventListener('click', async () => {
   toast('已清除，这首歌的多义词恢复自动选义');
 });
 $('#set-fx-hold').addEventListener('change', (e) => { prefs.fxHold = e.target.checked; savePrefs(); collectFill(); });
+$('#set-fx-mesh').addEventListener('change', (e) => { prefs.fxMesh = e.target.checked; savePrefs(); setFxMesh(prefs.fxMesh); });
 $('#set-less-motion').addEventListener('change', (e) => { prefs.lessMotion = e.target.checked; savePrefs(); if (prefs.lessMotion) ktvTilt(0, 0, true); });
 $('#set-fx-group').addEventListener('change', (e) => { prefs.fxGroup = e.target.checked; savePrefs(); markGroups(); if (S.lines.length && S.active > -2) setActive(S.active); });
 for (const id of ['set-style', 'set-max', 'set-grammar', 'set-vocabs', 'set-source', 'set-lang', 'set-autosense', 'set-levels']) $(`#${id}`).addEventListener('input', onAnnPrefChange);
