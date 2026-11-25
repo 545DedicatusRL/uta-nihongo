@@ -13,7 +13,7 @@ export function getTokenizer() {
         .build((err, t) => {
           if (err) return reject(err);
           resolve(t);
-          setTimeout(() => warmKanjiReadings(t), 0);
+          setTimeout(() => { warmKanjiReadings(t); warmKatakana(t); }, 0);
         });
     });
   }
@@ -548,6 +548,127 @@ function restoreSpelling(tokens, text) {
   }
 }
 
+// ---------------- 片假名写的和语词 ----------------
+// 歌词喜欢把平常写平假名 / 汉字的词写成片假名（ココロ、シンパイ、ナミダ、ヒビく）。分词器的词典里多半没有这种写法，
+// 于是要么切碎（シンパイ → シン + パイ，查到 thin 和 圆周率），要么当成人名地名，还会带歪旁边的词（たまにココロ → たま + に）。
+// 这里只管一件事：认出「这一段片假名是一个词」。它到底是外来词还是和语词、该用哪个释义，由查词典那一步定（annotate.js），
+// 所以查词用的还是片假名原样（アイ 可能是 愛 也可能是 eye，サイコ 是 psycho 不是 最古）；只有带活用词尾的动词、形容词直接用平假名的原形。
+// 做法和旧假名一样：分词时悄悄换一种写法，分完把歌词原来的字换回去，显示的还是原文。一段片假名一段片假名地看：
+//   1. 分词器认识这个片假名词（テレビ、キス、ママ、ダメ）→ 不动。
+//   2. 不认识、被切碎、或者被当成人名地名的 → 换成平假名再分一次。换了以后这一段正好是一个认识的词才采用（しんぱい、こころ、わたし）。
+//      片假名词干 + 平假名词尾的动词、形容词也算（ヒビく → ひびく、ムカつく、キツく）——只要原来的切法在词尾那里说不通
+//      （名词后面接 て / た / ない、或者接一个不成词的碎片）；说得通的不换（ケガしてる 是 ケガ + する，カスみたい 是 カス + みたい）。
+//   3. 平假名也分不好的（なみだ → なみ + だ）→ 按读音反查词典：有个常用词正好念这个音（涙 = ナミダ），就把这一段当成一个词。
+//   4. 还是没着落、而且切出来的碎片明显不像词（单个假名、不认识的片段）→ 整段合成一个词去查，查不到就不显示释义：
+//      宁可没有释义，也不显示不相干的。
+// 带长音、ヴ、小写元音（ファ、ティ）的是外来语的拼法，整段不碰。
+const KATA_RUN = /[ァ-ヶー]+/g;
+const LOAN_SHAPE = /[ーヴァィゥェォヮ]/;
+const isProper = (t) => t.pos === '名詞' && t.pos_detail_1 === '固有名詞';
+const NOUN_KIND = /^(一般|サ変接続|形容動詞語幹|副詞可能|代名詞|ナイ形容詞語幹)$/;
+const inflects = (t) => t.pos === '動詞' || t.pos === '形容詞';
+const nativeWord = (t) => t.word_type === 'KNOWN' && ((t.pos === '名詞' && NOUN_KIND.test(t.pos_detail_1))
+  || (inflects(t) && t.pos_detail_1 === '自立') || t.pos === '副詞' || t.pos === '連体詞' || t.pos === '感動詞');
+// 活用词尾：前面只能是动词 / 形容词，不会是名词（接续助词里 が / けど / から 这些接在句子后面，不算）
+const inflTail = (t) => !!t && ((t.pos === '助動詞' && !/^(だ|です|じゃ|らしい|っす)$/.test(t.basic_form))
+  || (t.pos === '助詞' && t.pos_detail_1 === '接続助詞' && /^(て|で|ば|たり|だり|ながら|つつ|ちゃ|じゃ)$/.test(t.surface_form)) || (t.pos === '動詞' && t.pos_detail_1 === '非自立'));
+// 名词后面可以正常跟着的东西：助词（接续助词除外）、だ / です、する、みたい 之类
+const afterNoun = (t) => !t || /^\s*$/.test(t.surface_form) || t.pos === '記号' || (t.pos === '助詞' && t.pos_detail_1 !== '接続助詞')
+  || (t.pos === '助動詞' && !inflTail(t)) || (t.pos === '動詞' && /^(する|できる)$/.test(t.basic_form)) || (t.pos === '名詞' && /^(非自立|接尾)$/.test(t.pos_detail_1));
+// 盖住 [a, b) 这一段的那些词、它们合起来从哪到哪，以及紧跟在后面的那个词
+function spanTokens(toks, a, b) {
+  const out = [];
+  let p = 0, start = -1, end = -1, after = null;
+  for (const t of toks) {
+    const e = p + t.surface_form.length;
+    if (e > a && p < b) { if (start < 0) start = p; end = e; out.push(t); } else if (start >= 0 && !after) after = t;
+    p = e;
+  }
+  return { toks: out, start, end, after };
+}
+// 读音（片假名）→ 词典里念这个音的最常用的词。只收平常带汉字写的名词、副词，和动词 / 形容词的原形；人名地名不收。
+// 「常用」按分词器词典里的代价算（越小越常用），太生僻的不收：片假名写的不会是生僻词，收了反而乱认
+const KATA_INDEX_MAX_COST = 7000;
+let kataIndex = null;
+function readingIndex(tokenizer) {
+  if (kataIndex) return kataIndex;
+  kataIndex = new Map();
+  const dict = tokenizer.token_info_dictionary;
+  for (const key of Object.keys(dict.target_map)) {
+    for (const id of dict.target_map[key]) {
+      const f = dict.getFeatures(id).split(',');
+      const r = f[8];
+      if (!r || r === '*' || r.length < 3 || ![...f[0]].some(isKanji)) continue;
+      const ok = (f[1] === '名詞' && NOUN_KIND.test(f[2])) || f[1] === '副詞' || ((f[1] === '動詞' || f[1] === '形容詞') && f[2] === '自立' && f[6] === '基本形');
+      if (!ok) continue;
+      const cost = dict.dictionary.getShort(id + 4);
+      if (cost > KATA_INDEX_MAX_COST) continue;
+      const cur = kataIndex.get(r);
+      if (!cur || cost < cur.cost) kataIndex.set(r, { w: f[0], pos: f[1], d1: f[2], cost });
+    }
+  }
+  return kataIndex;
+}
+export const warmKatakana = (tokenizer) => { readingIndex(tokenizer); };
+// 返回 { text: 分词用的写法（和原文一样长）, tokens: 按它分好的词, runs: 要当成一个词的片假名段 }
+// runs 里的每一项 { a, b, base: 查词用的词（片假名原样）, merge?: 合成时用的词性 }
+function nativeKatakana(tokenizer, text) {
+  let cur = text, parsed = tokenizer.tokenize(cur);
+  const runs = [];
+  if (!/[ァ-ヶ]{2}/.test(text)) return { text: cur, tokens: parsed, runs };
+  for (const m of text.matchAll(KATA_RUN)) {
+    const run = m[0], a = m.index, b = a + run.length;
+    if (run.length < 2 || LOAN_SHAPE.test(run)) continue;
+    const A = spanTokens(parsed, a, b);
+    const whole = A.toks.length === 1 && A.toks[0].word_type === 'KNOWN' && !isProper(A.toks[0]);
+    const okuri = A.end === b && /[ぁ-ゖ]/.test(text[b] || ''); // 后面紧跟着平假名：可能是「片假名词干 + 平假名词尾」
+    if (whole && !(okuri && !afterNoun(A.after))) continue;
+    const next = cur.slice(0, a) + toHira(run) + cur.slice(b);
+    const B0 = tokenizer.tokenize(next), B = spanTokens(B0, a, b), t = B.toks[0];
+    if (B.toks.length === 1 && B.start === a && nativeWord(t) && B0.length <= parsed.length) {
+      if (B.end > b) {
+        // 词干 + 词尾：ひびく。原来的切法在词尾那里说得通的（ケガ + する）不换
+        if (inflects(t) && /^[ぁ-ゖ]+$/.test(next.slice(b, B.end)) && !(A.end === b && afterNoun(A.after))) { cur = next; parsed = B0; continue; }
+      } else if (!whole) {
+        const verbal = inflects(t) && t.conjugated_form !== 'ガル接続' && inflTail(B.after); // マセた、ブレない：后面跟着活用词尾，是动词在用
+        // 动词的连用形单独出现是当名词用（サダメ、ヒズミ）；别的活用形、形容词的词干单独出现多半是碰巧（ハラ ≠ 張ら、ツラ ≠ 辛）
+        const nominal = !inflects(t) || (t.pos === '動詞' && t.conjugated_form === '連用形');
+        // 副词后面不会跟 を / が / の（ダイブを ≠ だいぶ）
+        const odd = t.pos === '副詞' && B.after?.pos === '助詞' && /^(を|が|の)$/.test(B.after.surface_form);
+        if (verbal) { cur = next; parsed = B0; continue; }
+        if (nominal && !odd) { cur = next; parsed = B0; runs.push({ a, b, base: run }); continue; }
+      }
+    }
+    if (whole || A.start !== a || A.end !== b) continue;
+    const hit = readingIndex(tokenizer).get(run);
+    if (hit) runs.push({ a, b, base: run, merge: { pos: hit.pos, d1: hit.d1 } });
+    else if (A.toks.length > 1 && A.toks.some((x) => x.surface_form.length === 1 || x.word_type === 'UNKNOWN')) runs.push({ a, b, base: run, merge: { pos: '名詞', d1: '一般', unknown: 1 } });
+  }
+  return { text: cur, tokens: parsed, runs };
+}
+// 把上面定下来的片假名段落实到分好的词上：该合的合成一个词；查词用片假名原样（base）
+function applyKatakana(raw, runs) {
+  if (!runs.length) return raw;
+  const out = [];
+  let p = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const g = runs.find((x) => x.a === p);
+    let j = i, e = p;
+    if (g) while (j < raw.length && e < g.b) e += raw[j++].surface_form.length;
+    if (!g || e !== g.b || (!g.merge && j - i !== 1)) { out.push(raw[i]); p += raw[i].surface_form.length; continue; }
+    const s = raw.slice(i, j).map((t) => t.surface_form).join('');
+    const noun = g.merge || (inflects(raw[i]) ? { pos: '名詞', d1: '一般' } : null);
+    out.push({
+      ...raw[i], surface_form: s, basic_form: g.base,
+      ...(noun ? { pos: noun.pos, pos_detail_1: noun.d1, pos_detail_2: '*', pos_detail_3: '*', conjugated_type: '*', conjugated_form: '*' } : {}),
+      ...(g.merge ? { reading: g.base, pronunciation: g.base, word_type: g.merge.unknown ? 'UNKNOWN' : 'KNOWN' } : {}),
+    });
+    p = e;
+    i = j - 1;
+  }
+  return out;
+}
+
 // ---------------- たまに ----------------
 // 假名写的这几个副词，分词器常切成「名词 + に」：たまには → たま（玉）+ に + は，やけに → やけ（自棄）+ に，
 // じきに → じき + に，ふいに → ふい（吹く）+ に。后面跟着的词不同切法还会变（たまにキミ 对、たまにココロ 错），查到的是不相干的词。
@@ -587,7 +708,8 @@ export async function analyzeLyrics(lines, opts = {}) {
     stats,
     lines: lines.map((line) => {
       const modern = modernSpelling(tokenizer, line.text);
-      const raw = fixNiAdverb(fixIta(fixSuru(fixMitai(tokenizer.tokenize(modern)))));
+      const kata = nativeKatakana(tokenizer, modern);
+      const raw = fixNiAdverb(fixIta(fixSuru(fixMitai(applyKatakana(kata.tokens, kata.runs)))));
       const tails = tailFlags(raw);
       let i0 = 0;
       const tokens = raw.map((t, ri) => {
@@ -609,7 +731,7 @@ export async function analyzeLyrics(lines, opts = {}) {
         i0 += s.length;
         return tok;
       });
-      if (modern !== line.text) restoreSpelling(tokens, line.text);
+      if (kata.text !== line.text) restoreSpelling(tokens, line.text);
       mergeUnknownVerbs(tokens, raw);
       mergeCompounds(tokens);
 
