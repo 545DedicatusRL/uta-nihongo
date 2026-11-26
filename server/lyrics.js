@@ -390,13 +390,11 @@ async function fetchQQ(mid, songId) {
   return out;
 }
 
-// 缓存的歌词按这个版本号认：整理歌词的规则改了就加 1，旧缓存会重新取一次
-const LYRICS_V = 2;
 export async function fetchLyrics(cand, refresh = false) {
   const file = `lyrics/${cand.source}-${safeName(cand.id)}.json`;
   if (!refresh) {
     const hit = readJSON(file, null);
-    if (hit && hit.v >= LYRICS_V) return hit; // 旧版本整理出来的缓存（比如重复句的时间配错了）重新取
+    if (hit) return hit;
   }
   const data = cand.source === 'qq' ? await fetchQQ(cand.id, cand.songId) : await fetchNetease(cand.id);
   const text = data.lines.map((l) => l.text).join('');
@@ -407,7 +405,6 @@ export async function fetchLyrics(cand, refresh = false) {
     roma: data.lines.some((l) => l.roma) || !!data.kana,
     words: data.lines.some((l) => l.ct),
   };
-  data.v = LYRICS_V;
   if (data.lines.length) writeJSON(file, data);
   return data;
 }
