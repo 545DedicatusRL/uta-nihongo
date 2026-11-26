@@ -74,6 +74,8 @@ function onState(s) {
   if (s.bye) return showBye();
   if (s.focus) return window.focus(); // 点了程序坞图标：程序把浏览器叫到了前面，这里尽量让这个窗口排到最上
   if (s.close) return window.close(); // 界面换到别的浏览器重新打开了：这个窗口自己关掉
+  // 这首歌的歌词在后台补上了逐字时间（见 server/lyrics.js 的 withQrc）：正在显示的就是它的话，重新载入换成逐字的
+  if (s.lyrics) { if (S.song?.key === s.lyrics) reloadSong(); return; }
   if ('queue' in s) onQueue(s.queue);
   // 自动模式：现在跟着的是哪个播放器（提示文字里用它的名字）
   if (s.source && PLAYER.id === 'auto') PLAYER.name = SRC_NAME[s.source];
@@ -167,7 +169,7 @@ async function loadSong(track, { refresh = false, keep = false } = {}) {
   S.active = -2;
   updateOffsetLabel();
   const srcName = { netease: '网易云', qq: 'QQ音乐' }[song.source?.source] || '';
-  $('#src-badge').textContent = song.lines.length ? [srcName, song.flags?.words ? '逐字' : '逐行', song.ai ? 'AI' : ''].filter(Boolean).join(' · ') : '';
+  $('#src-badge').textContent = song.lines.length ? [srcName, song.flags?.words ? (song.flags.qrc ? 'QRC' : '逐字') : '逐行', song.ai ? 'AI' : ''].filter(Boolean).join(' · ') : '';
   if (!song.lines.length) {
     setStatus(`${song.error ? esc(song.error) + '<br>' : ''}没有找到这首歌的歌词（可能是纯音乐）。<br><button class="btn" onclick="document.getElementById('btn-source').click()">手动选择歌词源</button>`);
   } else setStatus('');
@@ -2352,7 +2354,7 @@ async function openSource(q = '') {
   const cur = S.song?.source;
   $('#src-list').innerHTML = list.length ? list.map((c, i) => {
     const f = c.flags;
-    const tags = f ? (f.lines ? [f.trans && '翻译', f.words && '逐字', f.roma && '注音'].filter(Boolean).map((x) => `<b>${x}</b>`).join('') || '<span>仅原文</span>' : '<span>无歌词</span>') : '';
+    const tags = f ? (f.lines ? [f.trans && '翻译', f.words && (f.qrc ? 'QRC' : '逐字'), f.roma && '注音'].filter(Boolean).map((x) => `<b>${x}</b>`).join('') || '<span>仅原文</span>' : '<span>无歌词</span>') : '';
     return `<div class="cand${cur && cur.source === c.source && cur.id === c.id ? ' cur' : ''}" data-i="${i}">
       <span class="src">${c.source === 'qq' ? 'QQ音乐' : '网易云'}</span><div class="t">${esc(c.title)}</div>
       <div class="x">${fmt(c.duration)}${tags}</div><div class="a">${esc(c.artists.join(' / '))}${c.album ? ' — ' + esc(c.album) : ''}</div></div>`;

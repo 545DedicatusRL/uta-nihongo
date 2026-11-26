@@ -11,7 +11,7 @@ import {
 import * as appleMusic from './music.js';
 import * as netease from './netease.js';
 import * as auto from './auto.js';
-import { findCandidates, pickBest, fetchLyrics, withQrc } from './lyrics.js';
+import { findCandidates, pickBest, fetchLyrics, withQrc, lyricFlags } from './lyrics.js';
 import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
 import { createQueue } from './queue.js';
@@ -105,12 +105,12 @@ async function loadSong(track, { refresh = false } = {}) {
     }
     if (cand) lyrics = await fetchLyrics(cand, refresh);
     // 没有逐字时间的：用 QQ 音乐的逐字歌词补上（设置 → 更多 → 解析 QRC；补不了就还是原来那份）
-    if (cand && lyrics) lyrics = await withQrc(lyrics, cand, track, { refresh, pool: qqPool });
+    if (cand && lyrics) lyrics = await withQrc(lyrics, cand, track, { refresh, pool: qqPool, onLate: () => broadcast({ lyrics: key }) });
   } catch (e) { error = e.message; }
 
   const out = { key, track, source: cand, offset: meta.offset || 0, hiddenAnn: meta.hiddenAnn || [], senses: meta.senses || {}, lines: [], error, aiAvailable: aiAvailable(), ai: false };
   if (!lyrics || !lyrics.lines.length) return out;
-  out.flags = lyrics.flags;
+  out.flags = lyricFlags(cand, lyrics);
   if (lyrics.flags.japanese) {
     const res = await analyzeLyrics(lyrics.lines, { kana: lyrics.kana, meta, userDict: getUserDict() });
     out.lines = res.lines;
@@ -152,6 +152,8 @@ function cacheFiles() {
 }
 
 const sseClients = new Set();
+// 给所有开着的界面发一条消息
+const broadcast = (msg) => { for (const c of sseClients) c.write(`data: ${JSON.stringify(msg)}\n\n`); };
 // 其中由程序自己打开的界面窗口（地址带 ?app=1）。别的页面（比如另外在浏览器里手动打开的）不算，
 // 否则窗口明明关了，程序还以为它开着
 const appClients = new Set();
@@ -242,7 +244,7 @@ const routes = {
     const track = { name: q.get('name') || '', artist: q.get('artist') || '', duration: Number(q.get('duration')) || 0 };
     const cands = await findCandidates(track, q.get('q') || '');
     await Promise.all(cands.slice(0, 8).map(async (c) => {
-      try { c.flags = (await fetchLyrics(c)).flags; } catch { /* 忽略单个失败 */ }
+      try { c.flags = lyricFlags(c, await fetchLyrics(c)); } catch { /* 忽略单个失败 */ }
     }));
     send(res, 200, cands.map(slimCand));
   },

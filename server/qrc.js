@@ -222,26 +222,61 @@ export function qrcKana(content) {
 }
 
 // ---------------- 把逐字时间对到另一份歌词上 ----------------
-// lines：一份只有逐行时间的歌词（网易云的）；yrc：同一首歌在 QQ 上的逐字歌词。两边的音频不一定是同一个文件，
-// 开头可能差着零点几秒，所以先按「文字相同的行」估出两边的时间差，再把逐字时间平移到 lines 这边的时间轴上。
-// 文字只比去掉空白和标点以后的：两边的空格、句末的「、」「！」常常不一样。行的文字保持 lines 原样
-// （读音修正、AI 讲解都是按文字记的），逐字时间按字对上去，空格和标点不占时间。
+// lines：一份只有逐行时间的歌词（网易云的）；yrc：同一首歌在 QQ 上的逐字歌词。
+// 两边的分行常常不一样（这边两行、那边并成一行），空格、标点、英文大小写、括号里的和声也各写各的，所以不按「行」对，按「字」对：
+// 把 QQ 的逐字歌词连成一长串带时间的字，每一行到这一长串里找自己那一段。
+// 两边的音频也不一定是同一个文件，开头可能差着零点几秒：先估出时间差，再把逐字时间平移到 lines 这边的时间轴上。
+// 行的文字保持 lines 原样（读音修正、AI 讲解都是按文字记的）；空格、标点不占时间。
 // 返回 { lines: 带上 ct 的新数组, matched: 对上的行数, total: 有文字的行数, offset: QQ 比这边晚多少秒 }；
-// 对不上（不是同一首 / 同一个版本）时 matched 很少，由调用的地方决定用不用。
-const SKIP = /[\s\p{P}\p{S}]/u; // 空白、标点、符号：对行、对字时都不算
-const keyOf = (s) => String(s || '').normalize('NFKC').replace(/[\s\p{P}\p{S}]/gu, '');
-const yText = (y) => y.words.map((w) => w.text).join('');
+// 对不上（不是同一首 / 同一个版本）时 matched 很少或是 0，由调用的地方决定用不用。
+const SKIP = /[\s\p{P}\p{S}]/u; // 空白、标点、符号：对字时不算
+const normCh = (ch) => ch.normalize('NFKC').toLowerCase(); // 全角 / 半角、大小写当成一样
+// QQ 的逐字歌词 → 一长串规整过的字（s），和每个位置的起止时间（t0 / t1）。一个时间段里有几个字就平分
+function charStream(yrc) {
+  let s = '';
+  const t0 = [], t1 = [];
+  for (const y of yrc) {
+    for (const w of y.words) {
+      const chars = [...w.text].filter((ch) => /\S/.test(ch));
+      chars.forEach((ch, k) => {
+        if (SKIP.test(ch)) return;
+        const n = normCh(ch);
+        for (let u = 0; u < n.length; u++) { t0.push(w.t + (w.d * k) / chars.length); t1.push(w.t + (w.d * (k + 1)) / chars.length); }
+        s += n;
+      });
+    }
+  }
+  return { s, t0, t1 };
+}
+// 一行文字 → 用来找的那串字（key），和原文每个字对应 key 里的哪一段（没有对应的是 null：空白、标点；noParen 时括号里的也不算）
+function lineKey(text, noParen) {
+  let key = '', depth = 0;
+  const map = [];
+  for (const ch of text) {
+    if (noParen && /[(（]/.test(ch)) depth++;
+    const skip = SKIP.test(ch) || depth > 0;
+    if (noParen && /[)）]/.test(ch)) depth = Math.max(0, depth - 1);
+    if (skip) { map.push({ ch, at: null }); continue; }
+    const n = normCh(ch);
+    map.push({ ch, at: [key.length, key.length + n.length] });
+    key += n;
+  }
+  return { key, map };
+}
+const occurrences = (s, key) => { const out = []; for (let i = s.indexOf(key); i >= 0; i = s.indexOf(key, i + 1)) out.push(i); return out; };
 export function mergeWords(lines, yrc) {
-  const total = lines.filter((l) => keyOf(l.text)).length;
+  const keys = lines.map((l) => lineKey(String(l.text || ''), false));
+  const total = keys.filter((k) => k.key).length;
   const fail = { lines, matched: 0, total, offset: 0 };
   if (!yrc.length || !total) return fail;
-  const byKey = new Map();
-  for (const y of yrc) { const k = keyOf(yText(y)); if (!k) continue; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(y); }
-  // 时间差：每一行和「文字相同的那些行」里时间最接近的那个差多少，取中位数。只出现一次的句子最可靠，优先用它们
-  const diffs = (onlyUnique) => lines.flatMap((l) => {
-    const c = byKey.get(keyOf(l.text));
-    if (!c || (onlyUnique && c.length !== 1)) return [];
-    return [c.reduce((a, y) => (Math.abs(y.t - l.t) < Math.abs(a.t - l.t) ? y : a)).t - l.t];
+  const st = charStream(yrc);
+  // 时间差：每一行在那一长串里出现的位置和它自己的时间差多少，取中位数。只出现一次、又够长的句子最可靠，优先用它们
+  const diffs = (strict) => lines.flatMap((l, i) => {
+    const k = keys[i].key;
+    if (k.length < (strict ? 4 : 2)) return [];
+    const occ = occurrences(st.s, k);
+    if (!occ.length || (strict && occ.length !== 1)) return [];
+    return [occ.map((p) => st.t0[p] - l.t).reduce((a, d) => (Math.abs(d) < Math.abs(a) ? d : a))];
   });
   let ds = diffs(true);
   if (ds.length < 4) ds = diffs(false);
@@ -250,42 +285,32 @@ export function mergeWords(lines, yrc) {
   const offset = ds[ds.length >> 1];
   // 两边要真是同一个录音：大多数行的时间差都得贴着中位数。散得开（现场版、另一个编曲）就不用
   if (ds.filter((d) => Math.abs(d - offset) <= 0.8).length < ds.length * 0.7) return fail;
-  const used = new Set();
-  let matched = 0;
-  const r3 = (x) => Math.round(x * 1000) / 1000;
-  const out = lines.map((l) => {
-    let y = null;
-    for (const c of byKey.get(keyOf(l.text)) || []) {
-      if (used.has(c) || Math.abs(c.t - offset - l.t) >= 3) continue;
-      if (!y || Math.abs(c.t - offset - l.t) < Math.abs(y.t - offset - l.t)) y = c;
-    }
-    if (!y) return l;
-    // QQ 那边每个字的起止时间：一个时间段里有几个字就平分（空白不分时间），标点分到的那份不要
-    const times = [];
-    for (const w of y.words) {
-      const chars = [...w.text].filter((ch) => /\S/.test(ch));
-      chars.forEach((ch, k) => { if (!SKIP.test(ch)) times.push([w.t + (w.d * k) / chars.length - offset, w.t + (w.d * (k + 1)) / chars.length - offset]); });
-    }
-    // 对到这一行自己的文字上（按 UTF-16 码元一格一格记，和分词结果的下标保持一致）。
-    // 两边去掉空白、标点后只在全角 / 半角这类写法上有出入，字数对不上的就不挂
-    const ct = [];
-    let i = 0, last = Math.max(0, y.t - offset);
-    for (const ch of l.text) {
-      const skip = SKIP.test(ch);
-      if (!skip && i >= times.length) return l;
-      for (let u = 0; u < ch.length; u++) {
-        if (skip) { ct.push([r3(last), r3(last)]); continue; }
-        // 一个字占两个码元的（生僻字）：两格平分这个字的时间
-        const [a, b] = times[i];
-        ct.push([r3(Math.max(0, a + ((b - a) * u) / ch.length)), r3(Math.max(0, a + ((b - a) * (u + 1)) / ch.length))]);
+  const r3 = (x) => Math.round(Math.max(0, x) * 1000) / 1000;
+  let cursor = 0, matched = 0; // cursor：前面的行已经用到那一长串的哪儿了（一段字只给一行用，重复的句子各找各的）
+  const out = lines.map((l, i) => {
+    // 先整行找；找不到再把括号里的（和声、注释，另一边常常不写）去掉找
+    for (const k of [keys[i], lineKey(String(l.text || ''), true)]) {
+      if (!k.key || (k !== keys[i] && k.key === keys[i].key)) continue;
+      let pos = -1;
+      for (const p of occurrences(st.s, k.key)) {
+        const d = Math.abs(st.t0[p] - offset - l.t);
+        if (p < cursor || d >= 3) continue;
+        if (pos < 0 || d < Math.abs(st.t0[pos] - offset - l.t)) pos = p;
       }
-      if (!skip) { last = Math.max(0, times[i][1]); i++; }
+      if (pos < 0) continue;
+      // 按 UTF-16 码元一格一格记，和分词结果的下标保持一致；不占时间的字停在前一个字结束的地方
+      const ct = [];
+      let last = st.t0[pos] - offset;
+      for (const { ch, at } of k.map) {
+        const a = at ? st.t0[pos + at[0]] - offset : last, b = at ? st.t1[pos + at[1] - 1] - offset : last;
+        for (let u = 0; u < ch.length; u++) ct.push([r3(a + ((b - a) * u) / ch.length), r3(a + ((b - a) * (u + 1)) / ch.length)]);
+        last = b;
+      }
+      cursor = pos + k.key.length;
+      matched++;
+      return { ...l, t: r3(st.t0[pos] - offset), end: r3(st.t1[pos + k.key.length - 1] - offset), ct };
     }
-    if (i !== times.length) return l;
-    used.add(y);
-    matched++;
-    const lastW = y.words[y.words.length - 1];
-    return { ...l, t: r3(Math.max(0, y.t - offset)), end: r3(Math.max(y.t + y.d, lastW.t + lastW.d) - offset), ct };
+    return l;
   });
-  return { lines: out, matched, total, offset: r3(offset) };
+  return { lines: out, matched, total, offset: Math.round(offset * 1000) / 1000 };
 }

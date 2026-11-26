@@ -423,38 +423,53 @@ export async function pickBest(candidates) {
 
 // ---------------- QQ 的逐字歌词（QRC）补到别的歌词上 ----------------
 // 网易云的歌词没有逐字时间时，到 QQ 音乐找同一首歌，把它的逐字时间对到网易云这份歌词上（文字、翻译、罗马音都还是网易云的）。
-// QQ 的搜索接口有限流：连着查二十来首以后就不再返回结果，过一阵才恢复。所以：
+// QQ 的搜索接口（searchQQ 用的那个）限流很紧：查不了几次就不再返回结果，十来分钟才恢复。
+// 所以找歌优先用另一个轻量的「搜索联想」接口（searchQQLite）：它只给歌名、歌手、编号，没有时长，但实测主搜索被限时它照常能用；
+// 找到的是不是同一首歌、同一个录音，反正要靠歌词文字和时间对不对得上来确认（mergeWords），不靠时长。另外：
 //   - 只在真的没有逐字时才去查，查到的另存一份（lyrics/qrc-…json），以后直接用；
 //   - 新歌自动找歌词时本来就搜过一遍 QQ（findCandidates）：直接用那批结果（pool），不再搜第二遍；
 //   - 两次查询之间至少隔 QRC_GAP；还没到时间的这次就先用逐行的，下次载入这首歌再说；
-//   - 搜索没有返回结果、请求失败，都可能只是被限流了：不记成「QQ 没有」，这首歌过 QRC_RETRY 再试，
+//   - 两个搜索接口都没有返回结果，多半是被限流了：不记成「QQ 没有」，这首歌过 QRC_RETRY 再试，
 //     而且接下来 QRC_PAUSE 之内哪首歌都不查（限流的时候接着问只会拖得更久）；
+//   - 这次等不及（超过 wait）先给了逐行的：后台查完以后通过 onLate 告诉调用的地方，界面可以马上换成逐字的；
 //   - 只有「搜到了歌，但它没有逐字 / 歌词对不上」才记下来，QRC_NONE_TTL 之内不再查。
 // 任何一步出错都原样返回传进来的歌词：宁可没有逐字，也不能让整首歌没歌词。
-const QRC_V = 1;
-const QRC_GAP = 20 * 1000, QRC_PAUSE = 15 * 60 * 1000, QRC_RETRY = 15 * 60 * 1000, QRC_NONE_TTL = 14 * 86400 * 1000;
+const QRC_V = 2; // 2：按字对齐（分行不同、大小写不同的也对得上）。旧规则记下的「没有」作废，重新查
+const QRC_GAP = 6 * 1000, QRC_PAUSE = 5 * 60 * 1000, QRC_RETRY = 10 * 60 * 1000, QRC_NONE_TTL = 14 * 86400 * 1000;
 let qrcNextAt = 0;
 const qrcFailed = new Map(); // 歌 → 上次没查成是什么时候
 const qrcJobs = new Map();   // 歌 → 正在查的那一次
-// 对得上才用：至少 4 行，而且过半的行都挂上了逐字时间
+// 对得上才用：至少 4 行，而且四成以上的行都挂上了逐字时间（一边多写了和声、念白的歌，对不上的行会多一些）
 function applyWords(lyrics, yrc) {
   const m = mergeWords(lyrics.lines, yrc);
-  if (m.matched < 4 || m.matched < m.total * 0.5) return null;
+  if (m.matched < 4 || m.matched < m.total * 0.4) return null;
   return { ...lyrics, lines: m.lines, flags: { ...lyrics.flags, words: true }, qrc: 1 };
 }
 const stripWords = (lyrics) => ({ ...lyrics, lines: lyrics.lines.map(({ ct, ...l }) => l), flags: { ...lyrics.flags, words: false } });
+// QQ 的「搜索联想」（搜索框下拉提示用的接口）：只返回几条最像的，每条只有歌名、歌手、编号
+async function searchQQLite(query) {
+  const j = await getJSON(`https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?format=json&inCharset=utf-8&outCharset=utf-8&platform=yqq.json&key=${encodeURIComponent(query)}`, { headers: { Referer: 'https://y.qq.com/' } });
+  return (j.data?.song?.itemlist || []).filter((x) => x.mid && x.name).map((x) => ({
+    source: 'qq', id: x.mid, songId: Number(x.id) || 0, title: x.name, alias: [], artists: String(x.singer || '').split(/\s*[\/、,，]\s*/).filter(Boolean), album: '', duration: 0, lite: 1,
+  }));
+}
 async function qrcFromQQ(lyrics, cand, track, file, pool) {
   const title = cand.title || track?.name || '';
   const artists = cand.artists?.length ? cand.artists : track?.artist ? [track.artist] : [];
   if (!title && !pool) return null;
-  // pool：刚才自动找歌词时搜到的 QQ 条目（已经按这首歌打过分）。有就不再搜；没有才按网易云这条的歌名、歌手去搜
-  let list = pool;
-  if (!list) {
+  // pool：刚才自动找歌词时搜到的 QQ 条目（已经按这首歌打过分）。有就不再搜；
+  // 没有（或者那次搜索被限流了，是空的）就按网易云这条的歌名、歌手去搜：先用联想接口，它也没有才用主搜索
+  let list = pool?.length ? pool : null;
+  if (!list && title) {
     const ref = { name: title, artist: artists.join(' / '), duration: cand.duration || track?.duration || 0 };
     const names = { titles: [norm(title)], artists: artists.map(norm), tags: [titleTags(title)], albums: [cand.album].filter(Boolean) };
-    list = (await searchQQ(`${cleanTitle(title)} ${artists[0] || ''}`.trim()).catch(() => [])).map((c) => ({ ...c, score: scoreCandidate(c, ref, names) }));
+    const query = `${cleanTitle(title)} ${artists[0] || ''}`.trim();
+    // 联想接口不给时长：打分时当作时长一致，是不是同一个录音留给歌词去核对
+    let found = (await searchQQLite(query).catch(() => [])).map((c) => ({ ...c, duration: ref.duration }));
+    if (!found.length && !pool) found = await searchQQ(query).catch(() => []);
+    list = found.map((c) => ({ ...c, score: scoreCandidate(c, ref, names) }));
   }
-  if (!list.length) { qrcNextAt = Date.now() + QRC_PAUSE; return null; } // 没搜到东西多半是限流：歇一阵
+  if (!list?.length) { qrcNextAt = Date.now() + QRC_PAUSE; return null; } // 都没搜到东西多半是限流：歇一阵
   const ranked = list.filter((c) => c.score >= 70).sort((a, b) => b.score - a.score).slice(0, 2);
   const tried = []; // 试过哪几首、为什么没用上：记在缓存里，以后查起来知道是「QQ 没有逐字」还是「歌词对不上」
   for (const c of ranked) {
@@ -473,7 +488,7 @@ async function qrcUpgradeQQ(cand) {
   return data.flags?.words ? { lyrics: data } : data.qrc ? { none: 1 } : null;
 }
 // lyrics：fetchLyrics 给的歌词；返回补上逐字的那份（补不了就是原来那份）。wait：最多等多久，超过了这次先用逐行的，后台接着查完存起来
-export async function withQrc(lyrics, cand, track, { refresh = false, wait = 3500, pool = null } = {}) {
+export async function withQrc(lyrics, cand, track, { refresh = false, wait = 3500, pool = null, onLate = null } = {}) {
   try {
     if (!lyrics?.lines?.length || !cand || (cand.source !== 'netease' && cand.source !== 'qq')) return lyrics;
     if (!qrcEnabled()) return lyrics.qrc && lyrics.flags?.words ? stripWords(lyrics) : lyrics; // 关掉了：QRC 来的逐字时间不用
@@ -492,7 +507,23 @@ export async function withQrc(lyrics, cand, track, { refresh = false, wait = 350
         .then((r) => { qrcJobs.delete(key); if (r) qrcFailed.delete(key); else qrcFailed.set(key, Date.now()); return r; });
       qrcJobs.set(key, job);
     }
-    const got = await Promise.race([job, new Promise((r) => { setTimeout(() => r(null), wait).unref?.(); })]);
-    return got?.lyrics || lyrics;
+    const LATE = {};
+    const got = await Promise.race([job, new Promise((r) => { setTimeout(() => r(LATE), wait).unref?.(); })]);
+    // 等不及先给逐行的：后台查到逐字以后说一声
+    if (got === LATE && onLate) job.then((r) => { if (r?.lyrics) onLate(); }).catch(() => {});
+    return (got !== LATE && got?.lyrics) || lyrics;
   } catch { return lyrics; }
+}
+// 给界面看的标记：逐字时间是从 QRC 来的，就在 flags 上加 qrc（界面把「逐字」显示成「QRC」）。
+// 歌词来源列表里的网易云条目，已经补过逐字的也算；开关关着时 QRC 来的逐字不算数
+export function lyricFlags(cand, lyrics) {
+  const f = lyrics?.flags;
+  if (!f) return f;
+  if (!qrcEnabled()) return lyrics.qrc && f.words ? { ...f, words: false } : f;
+  if (f.words) return lyrics.qrc ? { ...f, qrc: true } : f;
+  if (cand?.source === 'netease') {
+    const hit = readJSON(`lyrics/qrc-netease-${safeName(cand.id)}.json`, null);
+    if (hit?.v === QRC_V && hit.yrc) return { ...f, words: true, qrc: true };
+  }
+  return f;
 }
