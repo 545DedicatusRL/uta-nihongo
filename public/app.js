@@ -2411,6 +2411,7 @@ async function openSettings() {
     $('#set-browser-apply').hidden = true;
     $('#set-player').value = s.player;
     $('#set-player-apply').hidden = s.player === s.playerInUse;
+    $('#set-qrc').checked = s.qrc !== false;
   } catch { /* 忽略 */ }
 }
 function onAnnPrefChange() {
@@ -2485,6 +2486,11 @@ $('#set-browser').addEventListener('change', async (e) => {
   try { await api.post('/api/settings', { browser: e.target.value }); } catch (err) { return toast(`保存失败：${err.message}`); }
   $('#set-browser-apply').hidden = false;
   toast('已保存，下次打开界面时生效');
+});
+// 解析 QRC（QQ 音乐的逐字歌词）：取歌词的是服务端，所以存在服务端；改了以后把正在放的这首重新载入，马上看到效果
+$('#set-qrc').addEventListener('change', async (e) => {
+  try { await api.post('/api/settings', { qrc: e.target.checked }); } catch (err) { e.target.checked = !e.target.checked; return toast(`保存失败：${err.message}`); }
+  reloadSong();
 });
 // 播放器：Apple Music / 网易云音乐。换了要重启程序才生效（界面会自动刷新）
 $('#set-player').addEventListener('change', async (e) => {

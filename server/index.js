@@ -11,7 +11,7 @@ import {
 import * as appleMusic from './music.js';
 import * as netease from './netease.js';
 import * as auto from './auto.js';
-import { findCandidates, pickBest, fetchLyrics } from './lyrics.js';
+import { findCandidates, pickBest, fetchLyrics, withQrc } from './lyrics.js';
 import { analyzeLyrics, getTokenizer } from './japanese.js';
 import { ensureDesktopShortcut } from './shortcut.js';
 import { createQueue } from './queue.js';
@@ -88,9 +88,11 @@ async function loadSong(track, { refresh = false } = {}) {
   let cand = meta.source;
   let lyrics = null;
   let error = null;
+  let qqPool = null; // 这次自动找歌词时搜到的 QQ 条目（补逐字时用，省得再搜一遍）
   try {
     if (!cand || refresh) {
       const cands = await findCandidates(track);
+      qqPool = cands.filter((c) => c.source === 'qq');
       // 网易云模式下知道正在播的这首在网易云里的 ID：直接用它的歌词，不靠搜索去猜
       if (track.neteaseId) {
         const exact = cands.find((c) => c.source === 'netease' && c.id === track.neteaseId);
@@ -102,6 +104,8 @@ async function loadSong(track, { refresh = false } = {}) {
       else cand = null;
     }
     if (cand) lyrics = await fetchLyrics(cand, refresh);
+    // 没有逐字时间的：用 QQ 音乐的逐字歌词补上（设置 → 更多 → 解析 QRC；补不了就还是原来那份）
+    if (cand && lyrics) lyrics = await withQrc(lyrics, cand, track, { refresh, pool: qqPool });
   } catch (e) { error = e.message; }
 
   const out = { key, track, source: cand, offset: meta.offset || 0, hiddenAnn: meta.hiddenAnn || [], senses: meta.senses || {}, lines: [], error, aiAvailable: aiAvailable(), ai: false };
@@ -370,6 +374,7 @@ const routes = {
       model: s.model, hasKey: !!s.apiKey, keyTail: s.apiKey ? s.apiKey.slice(-4) : '', envKey: !!process.env.ANTHROPIC_API_KEY,
       player: ['apple', 'netease'].includes(s.player) ? s.player : 'auto', playerInUse: PLAYER,
       browser: s.browser || 'auto', browsers: installedBrowsers(), browserInUse: pickBrowser(s.browser),
+      qrc: s.qrc !== false,
     });
   },
   'POST /api/settings': async (req, res) => {
@@ -378,6 +383,7 @@ const routes = {
     if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey.trim();
     if (typeof body.model === 'string' && body.model.trim()) patch.model = body.model.trim();
     if (['auto', 'apple', 'netease'].includes(body.player)) patch.player = body.player;
+    if (typeof body.qrc === 'boolean') patch.qrc = body.qrc;
     if (typeof body.browser === 'string' && (['auto', 'default'].includes(body.browser) || installedBrowsers().includes(body.browser))) patch.browser = body.browser;
     saveSettings(patch);
     send(res, 200, { ok: true });
