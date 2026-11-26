@@ -136,6 +136,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     config.userContentController.addUserScript(WKUserScript(source: DRAG_SCRIPT, injectionTime: .atDocumentStart, forMainFrameOnly: true))
     config.userContentController.add(self, name: "uta")
     web = WKWebView(frame: .zero, configuration: config)
+    // 不接受拖进来的东西：本程序用不到拖放，而 WebKit 在拖动经过页面时会画插入光标
+    // （一条竖线，或者带个小方块的横线），拖窗口、拖歌词时偶尔会留在屏幕上，看着像一条紫线
+    web.unregisterDraggedTypes()
     web.navigationDelegate = self
     web.uiDelegate = self
     web.setValue(false, forKey: "drawsBackground") // 载入前不闪白
@@ -166,34 +169,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
       """, baseURL: nil)
 
     // 全屏单独处理：没有红黄绿按钮，界面照浏览器里的样子铺满（「资料库」回到左上角）。
-    // 那条空工具栏也要收起来，不然它会留在屏幕顶上变成一条深色的带子，盖住界面的顶部栏。
+    // 那条空工具栏全屏时要收起来：留着的话，菜单栏一出现它也跟着出来，成了一条很粗的深色带子，盖住界面的顶部栏
+    // （交给系统的「全屏自动藏起工具栏」也是这样，试过了）。
+    // 收起 / 放回工具栏时按钮会换位置：没有工具栏时在最左上角，有工具栏时和「资料库」齐平。
+    // 退出全屏的动画过程中工具栏还没放回去，按钮待在最左上角，动画放完放回工具栏的一瞬间就跳下来。
+    // 所以进出全屏的动画过程中先把三个按钮藏起来，工具栏放回去、按钮到了最终的位置再淡入。
     // 退出时：一开始就让顶部栏先让出位置（免得按钮回来时压在「资料库」上），窗口落定后放回工具栏、重新量位置
     let nc = NotificationCenter.default
     nc.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-      self?.isFull = true
-      self?.window.toolbar?.isVisible = false
-      self?.syncLights()
+      guard let self else { return }
+      self.isFull = true
+      self.setLights(alpha: 0)
+      self.window.toolbar?.isVisible = false
+      self.syncLights()
+    }
+    nc.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: window, queue: .main) { [weak self] _ in
+      self?.setLights(alpha: 1) // 全屏时按钮在菜单栏下面那条细条里，鼠标移到屏幕顶上才和菜单栏一起出现
     }
     nc.addObserver(forName: NSWindow.willExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-      self?.isFull = false
-      self?.syncLights(measure: false)
+      guard let self else { return }
+      self.isFull = false
+      self.setLights(alpha: 0)
+      self.syncLights(measure: false)
     }
     nc.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-      self?.isFull = false
-      self?.window.toolbar?.isVisible = true
-      self?.window.layoutIfNeeded()
-      self?.syncLights()
+      guard let self else { return }
+      self.isFull = false
+      self.setLights(alpha: 0) // 系统在动画里要是把按钮重新显示出来了，这里再藏一次
+      self.window.toolbar?.isVisible = true
+      self.window.layoutIfNeeded()
+      self.syncLights()
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { self.setLights(alpha: 1, fade: 0.28) }
     }
     server.onExit = { NSApp.terminate(nil) }
     Task { await boot() }
   }
 
   // 把红黄绿按钮的位置告诉网页（--tl-end：最右一个的右边缘；--tl-cy：竖直中线，都从窗口左上角量），
-  // 顶部栏据此排在它们右边、同一条中线上。全屏时去掉 mac-app 标记。
+  // 顶部栏据此排在它们右边、同一条中线上。全屏时没有红黄绿按钮，加上 mac-full 标记，顶部栏不再让位。
+  // 注意不能把 mac-app 去掉：躲开 WebKit 紫线的那些样式（歌词不用模糊滤镜等）也挂在 mac-app 上，全屏时一样要。
   // 是否全屏自己记（isFull），不看窗口当时的状态：进出全屏的动画过程中窗口的状态还没变过来
   var isFull = false
+  // 红黄绿三个按钮一起显示 / 藏起来（fade > 0 时淡入淡出）
+  func setLights(alpha: CGFloat, fade: TimeInterval = 0) {
+    let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) }
+    if fade > 0 {
+      NSAnimationContext.runAnimationGroup { ctx in
+        ctx.duration = fade
+        for b in buttons { b.animator().alphaValue = alpha }
+      }
+    } else {
+      for b in buttons { b.alphaValue = alpha }
+    }
+    // 保险：进出全屏没成功（系统不发「已经进入 / 退出」的通知）时，按钮不能一直藏着、工具栏也要回到该在的样子
+    if alpha == 0 {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+        guard let self, (self.window.standardWindowButton(.closeButton)?.alphaValue ?? 1) == 0 else { return }
+        let full = self.window.styleMask.contains(.fullScreen)
+        if !full && self.window.toolbar?.isVisible == false { self.window.toolbar?.isVisible = true }
+        self.isFull = full
+        self.syncLights()
+        self.setLights(alpha: 1, fade: 0.2)
+      }
+    }
+  }
   func syncLights(measure: Bool = true) {
-    var js = "document.documentElement.classList.toggle('mac-app', \(!isFull));"
+    var js = "document.documentElement.classList.add('mac-app'); document.documentElement.classList.toggle('mac-full', \(isFull));"
     if measure, !isFull, let b = window.standardWindowButton(.zoomButton) {
       let r = b.convert(b.bounds, to: nil)
       let set = { (k: String, v: CGFloat) in "document.documentElement.style.setProperty('\(k)', '\(String(format: "%.1f", v))px');" }

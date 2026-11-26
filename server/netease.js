@@ -64,7 +64,7 @@ function evaluate(expression, timeout = 3000) {
 // ---------- 放进网易云页面里的小助手 ----------
 // 只装一次（页面重新载入后会重装）。snap() 返回当前状态；cmd() 执行控制命令。
 const AGENT = `(() => {
-  if (window.__uta && window.__uta.v === 6) return 'ok';
+  if (window.__uta && window.__uta.v === 7) return 'ok';
   const findStore = () => {
     const root = document.querySelector('#root') || document.body.firstElementChild;
     if (!root) return null;
@@ -82,6 +82,7 @@ const AGENT = `(() => {
   if (!store) return 'no-store';
   // id：歌曲的数字编号；raw：底层用的那个写法（见下），拖进度时要原样用它
   const prog = { id: '', raw: '', pos: 0, at: 0, seekTo: -1, seekAt: 0 };
+  const track = { id: '', prevProg: '', at: 0 }; // 界面上当前这首歌，见 snap
   // 客户端底层每隔一小会儿报一次进度，形如 (歌曲ID, "12.07", "1.0000")。
   // 歌曲 ID 的写法随客户端版本不同：有的是纯数字 "1469497524"，有的带前缀 "track-1469497524"。
   // 只认纯数字的话，带前缀的那种一条都认不出来，进度就停在旧位置上不动，歌词完全对不上
@@ -108,15 +109,20 @@ const AGENT = `(() => {
   };
   const rid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
   window.__uta = {
-    v: 6,
+    v: 7,
     snap() {
       const pl = store.getState().playing || {};
       const t = pl.curTrack;
       const state = pl.playingState === 2 ? 'playing' : pl.playingState === 1 ? 'paused' : 'stopped';
       if (!t || !t.id) return { state: 'stopped' };
       const id = String(t.id);
+      // 换歌的那一刻记下底层当时在报哪首：之后报来的编号只要不是上一首的，就当成这一首的进度。
+      // 有些歌底层报进度用的编号和界面上这首歌的编号不一样（比如版权原因换成了另一个版本），
+      // 只认编号完全相同的话，这些歌的进度会一直停在 0
+      if (id !== track.id) { track.prevProg = track.id ? prog.id : ''; track.id = id; track.at = Date.now(); }
+      const mine = prog.id === id || (prog.id && prog.id !== track.prevProg && prog.at > track.at);
       let pos = 0;
-      if (prog.id === id) {
+      if (mine) {
         pos = prog.pos;
         if (state === 'playing' && prog.at) pos += Math.min(2, (Date.now() - prog.at) / 1000) * (pl.playingSpeed || 1);
       } else if (pl.restoreResource && String(pl.restoreResource.id) === id) pos = Number(pl.restoreResource.current) || 0;
@@ -142,8 +148,10 @@ const AGENT = `(() => {
         case 'next': return click(/^下一首/);
         case 'prev': return click(/^上一首/);
         case 'seek': {
-          const id = String((pl.curTrack && pl.curTrack.id) || num(pl.resourceTrackId) || '');
-          if (!id) throw new Error('没有正在播放的歌');
+          const cur = String((pl.curTrack && pl.curTrack.id) || num(pl.resourceTrackId) || '');
+          if (!cur) throw new Error('没有正在播放的歌');
+          // 底层报进度用的是另一个编号时（见 snap），跳转也得用那个编号
+          const id = prog.id && prog.id !== cur && prog.id !== track.prevProg && prog.at > track.at && track.id === cur ? prog.id : cur;
           const to = Math.max(0, Number(a) || 0);
           // 和它自己拖进度条时发给底层的命令一样：audioplayer.seek(歌曲ID, "ID|seek|随机串", 秒数)。
           // 这里的歌曲 ID 要用底层自己的写法（可能带 track- 前缀），写法不对它不理：

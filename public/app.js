@@ -71,6 +71,7 @@ const now = () => (clock.playing ? clock.pos + (performance.now() - clock.at) / 
 function setClock(pos, playing = clock.playing) { clock.pos = pos; clock.at = performance.now(); clock.playing = playing; }
 
 function onState(s) {
+  if (s.bye && s.updating) { es.close(); return; } // 一键更新：App 马上会关掉、换上新版再打开
   if (s.bye) return showBye();
   if (s.focus) return window.focus(); // 点了程序坞图标：程序把浏览器叫到了前面，这里尽量让这个窗口排到最上
   if (s.close) return window.close(); // 界面换到别的浏览器重新打开了：这个窗口自己关掉
@@ -250,7 +251,7 @@ async function albumPalette(url) {
     const r = e.r / e.n, gg = e.g / e.n, b = e.b / e.n;
     const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
     const sat = mx ? (mx - mn) / mx : 0;
-    return { r, g: gg, b, share: e.n / total, w: e.n * (0.35 + sat) };
+    return { r, g: gg, b, share: e.n / total, w: e.n * (0.12 + sat * 1.6) }; // 有颜色的比白 / 灰优先：白底封面上那一块蓝才是它的主色调
   }).sort((x, y) => y.w - x.w);
   const picked = [];
   for (const col of cols) {
@@ -263,10 +264,14 @@ async function albumPalette(url) {
   }
   return picked.slice(0, 5);
 }
-// 太亮的颜色压一压（上面要放白字），太灰的稍微提一点饱和度
+// 太亮的颜色压暗（上面要放白字），色相不变。
+// 饱和度不能直接用 HSL 的 s：很亮的颜色哪怕只带一丁点色偏，s 也会算得很高（比如白里透一点青，s 有 36%），
+// 压暗之后就成了一片鲜绿。所以按「彩度」（最大和最小通道差多少）来定：近乎白 / 灰的颜色压暗后还是灰的
 function meshColor({ r, g, b }) {
-  const [h, s, l] = rgbToHsl(r, g, b);
-  return `hsl(${Math.round(h * 360)} ${Math.round(Math.min(1, s * 1.2 + 0.04) * 100)}% ${Math.round(Math.min(l, 0.52) * 100)}%)`;
+  const [h, , l] = rgbToHsl(r, g, b);
+  const chroma = (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+  const s = Math.min(0.85, chroma * 1.5);
+  return `hsl(${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(Math.min(l, 0.5) * 100)}%)`;
 }
 function rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255;
@@ -276,13 +281,20 @@ function rgbToHsl(r, g, b) {
   const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [h / 6, s, l];
 }
-// 流动背景的总开关。false：那五团色块整个不显示（连它们一直在跑的动画一起停掉），
-// 背景回到原来的样子（模糊的封面）；想再打开改回 true 就行
-const FX_MESH = false;
-$('#bg-mesh').hidden = !FX_MESH;
-let meshUrl = '';
+// 流动背景：设置 →「动画 → 流动背景」里开关，默认关。关着的时候那五团色块整个不显示（连它们一直在跑的动画一起停掉），
+// 背景是原来的样子（模糊的封面）
+const fxMesh = () => !!prefs.fxMesh;
+let meshUrl = '', meshWant = ''; // meshWant：当前封面，开关打开时拿它上色
+function setFxMesh(on) {
+  const mesh = $('#bg-mesh');
+  mesh.hidden = !on;
+  meshUrl = '';
+  if (on) { if (meshWant) paintMesh(meshWant); } else { mesh.classList.remove('on'); $('#bg').classList.remove('meshed'); }
+}
+$('#bg-mesh').hidden = !fxMesh();
 async function paintMesh(url) {
-  if (!FX_MESH || url === meshUrl) return;
+  meshWant = url;
+  if (!fxMesh() || url === meshUrl) return;
   meshUrl = url;
   const mesh = $('#bg-mesh');
   let pal;
@@ -291,12 +303,21 @@ async function paintMesh(url) {
   if (!pal || !pal.length) { mesh.classList.remove('on'); $('#bg').classList.remove('meshed'); return; }
   while (pal.length < 5) pal.push(pal[pal.length % Math.max(1, pal.length)]); // 颜色少的封面：重复用
   const blobs = [...mesh.children];
-  mesh.style.setProperty('--base', meshColor(pal[0]));
-  pal.forEach((p, i) => {
+  // 底色：占得多、又有颜色的那个（白底 / 灰底的封面，底色取上面那块主要的颜色，不取白和灰）
+  const chroma = (p) => (Math.max(p.r, p.g, p.b) - Math.min(p.r, p.g, p.b)) / 255;
+  const base = pal.reduce((a, p) => (p.share * (0.06 + chroma(p)) > a.share * (0.06 + chroma(a)) ? p : a));
+  mesh.style.setProperty('--base', meshColor(base));
+  // 色块从其余的颜色排起，底色自己放到最后一团（上边那团）
+  [...pal.slice(0, pal.indexOf(base)), ...pal.slice(pal.indexOf(base) + 1), base].forEach((p, i) => {
     blobs[i].style.setProperty('--mc', meshColor(p));
-    // 占得越多越大：底下 55vmax，占满再加 70vmax
-    blobs[i].style.setProperty('--s', `${Math.round(55 + Math.min(1, p.share * 2.2) * 70)}vmax`);
+    // 占得越多越大：48vmax 起，最大 80vmax（最多的颜色已经是底色，色块不用铺满）
+    blobs[i].style.setProperty('--s', `${Math.round(48 + Math.min(1, p.share * 2) * 32)}vmax`);
   });
+  // 第一次上色时，每团从自己路线上随机的一点开始，免得每次打开都是同一个样子
+  if (!mesh.dataset.seeded) {
+    mesh.dataset.seeded = '1';
+    blobs.forEach((b) => { b.style.animationDelay = `${-Math.round(Math.random() * 60)}s`; });
+  }
   mesh.classList.add('on');
   $('#bg').classList.add('meshed');
 }
@@ -557,9 +578,21 @@ function jpHTML(line, li) {
       const cls = `seg${isK ? ' k' : ''}${whole ? ' fu' : ''}${seg.src ? ` src-${seg.src}` : ''}`;
       inner += `<span class="${cls}" data-si="${si}"${whole}>${ruby ? `<ruby>${chars}${parts ? `<rt class="rks">${rks}</rt>` : `<rt><span class="rw">${esc(seg.r)}</span></rt>`}</ruby>` : chars}</span>`;
     });
-    html += `<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
+    html += `${ti && phraseStart(line.tokens, ti) ? '<wbr>' : ''}<span class="tok${tok.j ? ' j' : ''}" data-ti="${ti}">${inner}</span>`;
   });
   return html;
+}
+// 长句折行只在「文节」之间断：样式里不许在日文字之间随便断（word-break: keep-all），这里在每个文节开头放一个 <wbr>，
+// 浏览器只能在这些地方换行，再配上 text-wrap: balance 把两行排得差不多长——不会把「…だったらい / い」这样拆开。
+// 文节 = 一个实词（名词、动词、形容词、副词…）连同后面跟着的助词、助动词。前一个是接头词、或者前后都是名词（复合词）时不断
+const PHRASE_HEAD = new Set(['名', '动', '形', '副', '连体', '接续', '感叹', '接头']);
+function phraseStart(toks, ti) {
+  const t = toks[ti], p = toks[ti - 1];
+  if (t.sp || p.sp) return true;
+  if (!PHRASE_HEAD.has(t.pos) || !t.v && t.pos !== '连体' && t.pos !== '接续' && t.pos !== '感叹' && t.pos !== '接头') return false;
+  if (p.pos === '接头') return false;
+  if (p.pos === '名' && t.pos === '名') return false;
+  return true;
 }
 function lineBody(line, li) {
   return `<div class="jp" lang="ja" data-li="${li}">${jpHTML(line, li)}</div>`
@@ -600,7 +633,9 @@ function renderFocus() {
     copy.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;margin:0;max-width:none;pointer-events:none;animation:none;`;
     copy.setAttribute('aria-hidden', 'true');
     $('#focus-inner').append(copy);
-    copy.animate([{ opacity: 1, transform: 'none', filter: 'blur(0)' }, { opacity: 0, transform: 'translateY(-10px) scale(.985)', filter: 'blur(5px)' }],
+    // Mac App 里淡出时不加模糊：WebKit 的滤镜图层边上会画出紫线（见 style.css 的 .mac-app .line）
+    const blurOut = !document.documentElement.classList.contains('mac-app');
+    copy.animate([{ opacity: 1, transform: 'none', ...(blurOut && { filter: 'blur(0)' }) }, { opacity: 0, transform: 'translateY(-10px) scale(.985)', ...(blurOut && { filter: 'blur(5px)' }) }],
       { duration: 520, easing: 'cubic-bezier(.3, .1, .3, 1)', fill: 'forwards' }).onfinish = () => copy.remove();
   }
   // 上一句 / 下一句的小字会因为中间变矮而挪到新位置：让它们稍后再淡入，不和正在淡出的大字叠在一起
@@ -801,7 +836,7 @@ for (const ev of ['wheel', 'touchmove']) {
 
 // ---------------- 每一帧：进度条、逐字填充、间奏的三个点 ----------------
 // 这里每秒跑 60 次，所以只在数值真的变了的时候才去改页面，并且尽量只改不会引起重新排版的属性
-const elFill = $('#progress-fill'), elCur = $('#t-cur'), elRem = $('#t-rem');
+const elFill = $('#progress-fill'), elCur = $('#t-cur'), elRem = $('#t-rem'), elSeek = $('#seek');
 const shown = { w: -1, cur: '', rem: '' };
 function setProgress(frac) {
   const w = Math.round(clamp(frac) * 2000) / 2000;
@@ -860,7 +895,11 @@ function tick() {
   const pos = now();
   const dur = S.track?.duration || 0;
   if (!S.dragging) {
-    setProgress(dur ? pos / dur : 0);
+    const frac = dur ? pos / dur : 0;
+    setProgress(frac);
+    // 看不见的滑块也跟着播放位置走：按在看得见的进度头上就是按住了它（不会先跳一下）
+    const v = String(Math.round(clamp(frac) * 1000));
+    if (elSeek.value !== v) elSeek.value = v;
     const cur = fmt(pos), rem = `-${fmt(Math.max(0, dur - pos))}`;
     if (cur !== shown.cur) elCur.textContent = shown.cur = cur;
     if (rem !== shown.rem) elRem.textContent = shown.rem = rem;
@@ -901,10 +940,20 @@ function tick() {
     });
   }
 }
-function frame() {
+// 省电：暂停播放时，流动背景停下来（anim-rest），歌词每 0.25 秒算一次就够（画面基本不变；拖进度条时照常每帧算）。
+// 窗口最小化、被别的窗口完全挡住或切到别的桌面时（document.hidden），所有一直循环的动画都停（anim-hidden）
+let restOn = null, idleAt = 0;
+function frame(ts) {
   requestAnimationFrame(frame);
+  const rest = !clock.playing;
+  if (rest !== restOn) { restOn = rest; document.documentElement.classList.toggle('anim-rest', rest); }
+  if (rest && !S.dragging && ts - idleAt < 250) return;
+  idleAt = ts;
   tick();
 }
+const syncHidden = () => document.documentElement.classList.toggle('anim-hidden', document.hidden);
+document.addEventListener('visibilitychange', syncHidden);
+syncHidden();
 
 // 词典释义按设置的语言取：中文（有道）/ 英文（Jisho）/ 两者
 // 多义词选义项。优先级：
@@ -2389,6 +2438,7 @@ async function openSettings() {
   $('#set-fx-hold').checked = !!prefs.fxHold;
   $('#set-fx-group').checked = !!prefs.fxGroup;
   $('#set-less-motion').checked = !!prefs.lessMotion;
+  $('#set-fx-mesh').checked = !!prefs.fxMesh;
   const picked = Object.keys(S.senses || {}).length;
   $('#set-clear-senses').hidden = !picked;
   $('#set-clear-senses').textContent = `清除这首歌里手动选的 ${picked} 个`;
@@ -2436,6 +2486,7 @@ $('#set-clear-senses').addEventListener('click', async () => {
   toast('已清除，这首歌的多义词恢复自动选义');
 });
 $('#set-fx-hold').addEventListener('change', (e) => { prefs.fxHold = e.target.checked; savePrefs(); collectFill(); });
+$('#set-fx-mesh').addEventListener('change', (e) => { prefs.fxMesh = e.target.checked; savePrefs(); setFxMesh(prefs.fxMesh); });
 $('#set-less-motion').addEventListener('change', (e) => { prefs.lessMotion = e.target.checked; savePrefs(); if (prefs.lessMotion) ktvTilt(0, 0, true); });
 $('#set-fx-group').addEventListener('change', (e) => { prefs.fxGroup = e.target.checked; savePrefs(); markGroups(); if (S.lines.length && S.active > -2) setActive(S.active); });
 for (const id of ['set-style', 'set-max', 'set-grammar', 'set-vocabs', 'set-source', 'set-lang', 'set-autosense', 'set-levels']) $(`#${id}`).addEventListener('input', onAnnPrefChange);
@@ -2630,14 +2681,28 @@ document.addEventListener('mousedown', (e) => {
 $('#btn-play').addEventListener('click', () => control('playpause'));
 $('#btn-prev').addEventListener('click', () => control('prev'));
 $('#btn-next').addEventListener('click', () => control('next'));
-const seek = $('#seek');
+const seek = elSeek;
+// 拖进度条：按下以后进度条不再跟着播放走（S.dragging），松手时跳过去。
+// 不能只等 change 事件：WebKit 只有在松手时的值和上一次发 change 时不一样才会发它。拖回上一次拖到的那个点
+// （想重听同一段时很常见）就收不到 change，不跳，S.dragging 也一直留在 true，进度条从此停住不动。
+// 所以松手（pointerup）就算拖完；change 只管键盘（方向键）改的值
+let seekMoved = false;
+seek.addEventListener('pointerdown', () => { S.dragging = true; seekMoved = false; });
 seek.addEventListener('input', () => {
-  S.dragging = true;
+  S.dragging = true; seekMoved = true;
   const dur = S.track?.duration || 0;
   setProgress(seek.value / 1000);
   $('#t-cur').textContent = fmt((seek.value / 1000) * dur);
 });
-seek.addEventListener('change', () => { S.dragging = false; if (S.track) seekTo((seek.value / 1000) * S.track.duration); });
+function endSeekDrag() {
+  if (!S.dragging) return;
+  S.dragging = false;
+  if (seekMoved && S.track) seekTo((seek.value / 1000) * S.track.duration);
+  seekMoved = false;
+}
+seek.addEventListener('change', endSeekDrag);
+addEventListener('pointerup', endSeekDrag, true);
+addEventListener('pointercancel', endSeekDrag, true);
 
 function stepLine(dir) {
   let i = clamp(S.active + dir, 0, S.lines.length - 1);
@@ -3273,3 +3338,64 @@ requestAnimationFrame(frame);
 }
 // 调试入口：地址加 ?debug 后可在控制台用 __uta.onState(...) 模拟播放状态
 if (new URLSearchParams(location.search).has('debug')) { es.close(); window.__uta = { onState, S, clock, prefs, tick, stepReading, setView }; }
+
+// 不让拖动歌词、图片：选中的歌词一拖就成了「拖放」，WebKit 会在页面上画插入光标（Mac App 里像一条紫线）
+document.addEventListener('dragstart', (e) => {
+  const el = e.target.nodeType === 1 ? e.target : e.target.parentElement;
+  if (!el?.closest('input, textarea, [contenteditable]')) e.preventDefault();
+});
+// ⌘A 只在输入框里全选：别处按下去不再把整个界面选中（按钮、顶部栏的字会出现选中时的灰底）
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.key === 'a' || e.key === 'A')
+    && !e.target.closest?.('input, textarea, [contenteditable]')) e.preventDefault();
+});
+
+// 检查更新：每次打开界面问一次本地服务（服务每次启动只去 GitHub 查一次）。有新版本就在顶上露一条，
+// 点「以后再说」就不再提醒这个版本（下一个新版本还会提醒）
+let isApp = false;
+function showUpdate(u) {
+  if (!u?.newer || !u.latest) return;
+  try { if (localStorage.getItem('uta-skip-update') === u.latest) return; } catch {}
+  $('#update-bar')?.remove();
+  const bar = document.createElement('div');
+  bar.id = 'update-bar';
+  bar.setAttribute('role', 'status');
+  const link = `<a class="ub-go" href="${esc(u.page)}" target="_blank" rel="noopener">下载新版</a>`;
+  // Mac App：能自己换上新版就给「立即更新」，不能（比如 App 放在写不进去的地方）就打开下载页；浏览器里用的：复制更新命令
+  const act = isApp && u.canInstall ? '<button class="ub-go ub-install" type="button">立即更新</button>'
+    : isApp && (u.download || u.page) ? link
+    : '<button class="ub-go" type="button">复制更新命令</button>';
+  bar.innerHTML = `<span class="ub-text">有新版本 <b>v${esc(u.latest)}</b>（当前 v${esc(u.current)}）</span>${act}<button class="ub-later" type="button">以后再说</button>`;
+  document.body.append(bar);
+  const close = () => { bar.classList.add('leaving'); setTimeout(() => bar.remove(), 220); };
+  bar.querySelector('.ub-later').addEventListener('click', () => { try { localStorage.setItem('uta-skip-update', u.latest); } catch {} close(); });
+  const go = bar.querySelector('.ub-go');
+  const text = bar.querySelector('.ub-text');
+  if (go.classList.contains('ub-install')) go.addEventListener('click', async () => {
+    go.disabled = true; bar.querySelector('.ub-later').hidden = true;
+    bar.classList.add('busy');
+    text.textContent = '正在下载新版…';
+    const failed = (msg) => {
+      bar.classList.remove('busy');
+      text.textContent = `自动更新没成功：${msg}`;
+      go.outerHTML = link;
+      bar.querySelector('.ub-go').addEventListener('click', () => toast('下载后解压，替换「应用程序」里的旧版即可'));
+      bar.querySelector('.ub-later').hidden = false;
+    };
+    try { await api.post('/api/update/install', {}); } catch (e) { return failed(e.message); }
+    const tick = async () => {
+      let p;
+      try { p = await api.get('/api/update/progress'); } catch { text.textContent = '正在重启…'; return; } // 服务已经退出：在换新版了
+      if (p.phase === 'error') return failed(p.error);
+      text.textContent = p.phase === 'download' ? `正在下载新版 ${p.pct}%` : p.phase === 'unpack' ? '正在核对新版…' : p.phase === 'restart' ? '正在重启…' : '正在准备…';
+      if (p.phase !== 'restart') setTimeout(tick, 400);
+    };
+    tick();
+  });
+  else if (go.tagName === 'BUTTON') go.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(u.install); toast('已复制：粘贴到「终端」里运行，词汇书和设置会保留'); }
+    catch { toast(u.install); }
+  });
+  else go.addEventListener('click', () => toast('下载后解压，替换「应用程序」里的旧版即可'));
+}
+api.get('/api/info').then((i) => { isApp = !!i.app; return api.get('/api/update'); }).then(showUpdate).catch(() => {});
