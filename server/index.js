@@ -446,3 +446,10 @@ server.listen(PORT, '127.0.0.1', () => {
   getTokenizer().catch((e) => console.error('词典加载失败：', e.message));
 });
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { music.stopWatcher(); process.exit(0); });
+// Mac App 里的服务是 App 带起来的：App 没了（被强制退出、崩溃、被 kill）就跟着退出。
+// 不然会留下一个没人管的后台服务，一直占着端口、连着播放器——它要是旧版本，还会和新开的那份抢着改网易云里的小助手
+//（两边版本号不同就互相覆盖，进度被反复清零）。父进程没了以后 process.ppid 会变
+if (process.env.UTA_APP) {
+  const parent = process.ppid;
+  setInterval(() => { if (process.ppid !== parent) { music.stopWatcher(); process.exit(0); } }, 3000).unref();
+}
