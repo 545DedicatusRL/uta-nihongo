@@ -180,11 +180,24 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 /* 当前句（和同组亮着的句子）不虚化，滤镜直接拿掉，不留一个 blur(0)：Mac App（WebKit）里带滤镜的图层边上
    偶尔会画出一条紫色的细线（显卡里没清干净的一行像素），正落在当前句的下沿。没有滤镜就没有这个图层 */
 .line.active, .line.co { filter: none; }
-/* Mac App（WebKit）里滚动歌词的虚化仍然用模糊滤镜，和浏览器里一样。
-   试过改成「字透明 + 模糊的文字阴影」来躲开 WebKit 滤镜图层边上偶尔出现的紫线，但那样要求歌词改用系统字体：
+/* Mac App 里歌词行不用模糊滤镜（filter: blur）：WebKit 给带滤镜的元素单独开一个图层，图层边上（比元素四周再外扩模糊半径那么一圈）
+   时不时会画出一条紫色的细线——鼠标指着的那行上沿一条横线、某个字后面一条竖线。浏览器里没有这个问题，照旧用滤镜。
+   App 里换个办法做出同样的虚化：字本身透明，只留一层模糊的文字阴影（text-shadow），离当前句越远阴影越散。
+   阴影是画在这一行自己的内容里的，不另开图层，也就没有那条线（mac-app 这个 class 由 App 外壳加在 <html> 上） */
+.mac-app .line { filter: none; --bl: calc(.8px + min(var(--d, 0), 5) * 1.5px);
+  transition: opacity .6s ease, color .45s ease, text-shadow .6s ease, transform var(--spring-ms, .65s) var(--spring, cubic-bezier(.2, .9, .25, 1)), background .2s; }
+.mac-app :is(#app, #morph-ghost):not(.dict-mode):not(.edit-mode) #scroll:not(.free) .line:not(.active):not(.co):not(.gap) { color: rgba(255, 255, 255, .01); text-shadow: 0 0 var(--bl) var(--fg-2), 0 0 var(--bl) var(--fg-3); }
+/* 字的颜色不能是全透明：WebKit 遇到全透明的字连阴影一起不画，所以留 1% */
+/* 换样式的动画里，原来那页歌词会抄一份（#morph-ghost）盖在原处慢慢淡出：那一份也得是虚的，不然清楚的旧歌词和大字叠在一起 */
+/* 滚动歌词在 Mac App 里统一用系统字体（英文、数字是 SF，假名、汉字落到系统给的 Hiragino，和别处看起来一样）：
    「Uta JP」（见文件开头，日文字、日文标点走 Hiragino 的那个本地字体）在 WebKit 里配上文字阴影画不出来，虚化的行整行看不见
-   （实测过：换字重、调透明度、去掉 inline-block、去掉 background-clip 都不行）。而换成系统字体以后省略号、破折号、弯引号
-   会变成英文字体的样子。字体保持原样优先，所以这里不改；以后要是找到两全的办法，改这一处就行 */
+   （实测过：换字重、调透明度、去掉 inline-block、去掉 background-clip 都不行）。只给虚化的行换字体又会在唱到时跳一下，所以每一行都用同一套。
+   但系统字体排在前面，省略号、破折号、弯引号、☆♪ 这些符号就归了 SF，成了英文排版的样子（窄、省略号沉在底下）。
+   所以这些符号单独指回日文字体：app.js 的 jpHTML 给它们加了 pj 这个 class，这里直接点名用 Hiragino
+   （直接点名的系统字体没有上面那个问题，虚化时照样画得出来） */
+.mac-app :is(#app, #morph-ghost) #scroll .line .jp { font-family: system-ui, -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; }
+.mac-app :is(#app, #morph-ghost) #scroll .line .jp .pj { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif; }
+.mac-app #scroll .line .ann { color: var(--fg); text-shadow: none; } /* 标注卡片不虚化 */
 .line.active .ann { animation: ann-in .5s .12s cubic-bezier(.2, .8, .2, 1) backwards; }
 @keyframes ann-in { from { opacity: 0; transform: translateY(6px); } }
 /* 修改模式：当前句前后各两句也列出标注（稍暗一点，当前句仍然最显眼）；收起时原地淡出，不再占位置 */

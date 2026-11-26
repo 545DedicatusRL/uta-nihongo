@@ -540,6 +540,8 @@ function clearHold(s) {
 let holdTail = [];
 
 // ---------------- 渲染歌词 ----------------
+// 西文字体里也有、但日文里要按日文排版（居中、占一格）的符号：一般标点（‐—…“”‘’•※ 等）和各种符号（→☆★♪♡ 等）
+const PUNCT_JA = /[\u2010-\u205E\u2100-\u27BF]/;
 function jpHTML(line, li) {
   if (line.gap) return '<span class="dots"><span class="dots-g"><i></i><i></i><i></i></span></span>';
   let html = '';
@@ -571,7 +573,8 @@ function jpHTML(line, li) {
       }
       else for (const ch of seg.t) {
         const tm = !ruby && line.ct?.[ci];
-        chars += `<span class="ch${tm ? ' fu' : ''}" data-c="${ci}"${tm ? unit(tm[0], tm[1], ci) : ''}>${esc(ch)}</span>`;
+        // pj：省略号、破折号、弯引号、☆♪ 这类符号。Mac App 的滚动歌词用系统字体，这些符号要单独指回日文字体（见 style.css 的 .pj）
+        chars += `<span class="ch${tm ? ' fu' : ''}${PUNCT_JA.test(ch) ? ' pj' : ''}" data-c="${ci}"${tm ? unit(tm[0], tm[1], ci) : ''}>${esc(ch)}</span>`;
         ci += ch.length;
       }
       const whole = ruby && !parts && line.ct?.[c0] ? unit(line.ct[c0][0], (line.ct[ci - 1] || line.ct[c0])[1], c0) : '';
