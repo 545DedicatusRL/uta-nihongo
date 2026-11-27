@@ -3,7 +3,7 @@ import path from 'node:path';
 import kuromoji from 'kuromoji';
 import { ROOT } from './store.js';
 import { matchGrammar } from './grammar.js';
-import { splitKanjiReading, warmKanjiReadings } from './kanji-readings.js';
+import { splitKanjiReading, knownKanjiReading, isStemReading, warmKanjiReadings } from './kanji-readings.js';
 
 let tokenizerPromise = null;
 export function getTokenizer() {
@@ -146,9 +146,103 @@ function splitFurigana(surface, reading) {
 }
 
 // ---------------- 罗马音纠错 ----------------
+// 歌词源的罗马音多半是机器标的，会把训读的词念成音读（抱え → da e、遮って → sha tte），对齐偶尔也会错位、
+// 把旁边的音算进来。所以它给的读音要词典也认得才采用：
+//   · 词典里从这个位置开始、至少和这个词一样长的词（彷徨 后面跟着 う 时也看 彷徨う）有这个读法 → 采用，假名用词典的
+//     （罗马音 doori 分不出 どおり / どうり）；
+//   · 接在别的词后面时，词典读音浊化、促音化以后对得上也算（夢 + 語り → がたり、一 + 回 → いっかい）；
+//   · 词典认得这个词、却没有这个读法 → 不采用，留词典读音。只有一种情况例外（见 romaStillWins）：整个词只有汉字、
+//     罗马音给的又不像机器念错的——词典里没有的词（彷徨う、征く、愛おしい）会被切成「汉字 + 词尾」，汉字那一截只有音读可选；
+//   · 词典根本不认识这个词（没有读音可比）→ 照旧听罗马音的。
+// 两种读法词典都有的（怒る おこ / いか、開ける あ / ひら）这里分不出对错，仍然听罗马音的。
+const kanjiSegs = (segs) => segs.filter((g) => [...g.t].some(isKanji));
+const SEION = { か: 'が', き: 'ぎ', く: 'ぐ', け: 'げ', こ: 'ご', さ: 'ざ', し: 'じ', す: 'ず', せ: 'ぜ', そ: 'ぞ', た: 'だ', ち: 'ぢ', つ: 'づ', て: 'で', と: 'ど', は: 'ば', ひ: 'び', ふ: 'ぶ', へ: 'べ', ほ: 'ぼ' };
+const HANDAKU = { は: 'ぱ', ひ: 'ぴ', ふ: 'ぷ', へ: 'ぺ', ほ: 'ぽ' };
+// 词典读音接在别的词后面 / 前面时可能变成的样子（不含它自己）
+function soundChanges(r, joinedBefore, joinedAfter) {
+  const out = [];
+  if (joinedBefore && SEION[r[0]]) out.push(SEION[r[0]] + r.slice(1));
+  if (joinedBefore && HANDAKU[r[0]]) out.push(HANDAKU[r[0]] + r.slice(1));
+  if (joinedAfter && r.length >= 2 && /[つくちきう]$/.test(r)) for (const v of [r, ...out]) out.push(v.slice(0, -1) + 'っ');
+  return out;
+}
+// 词典里从 text 的 at 位置开始、长度不短于 minLen 的所有词：[{ s: 写法, r: 平假名读音, name: 是人名地名 }]
+function dictWordsAt(tokenizer, text, at, minLen) {
+  const dict = tokenizer.token_info_dictionary;
+  const out = [];
+  for (const hit of tokenizer.viterbi_builder.trie.commonPrefixSearch(text.slice(at))) {
+    if (hit.k.length < minLen) continue;
+    for (const id of dict.target_map[hit.v] || []) {
+      const f = dict.getFeatures(id).split(',');
+      if (f[8] && f[8] !== '*') out.push({ s: hit.k, r: toHira(f[8]), name: f[2] === '固有名詞' });
+    }
+  }
+  return out;
+}
+// 罗马音想把 tok 里的几段汉字改成 wanted（Map：段 → 罗马字）。词典认不认？
+// 返回 Map：段 → 采用的假名；词典不认识这个词 → null（没法比）；认识但没有这个读法 → false；
+// 只有当成人名地名时才有这个读法 → 'name'（行方 → なめがた、一房 → かずふさ：机器把普通的词念成了人名地名，不采用）
+function dictAgrees(tokenizer, text, tokens, ti, wanted) {
+  const tok = tokens[ti];
+  if (!tokenizer || text == null || tok.u) return null;
+  const found = dictWordsAt(tokenizer, text, tok.i0, tok.s.length);
+  const words = found.filter((w) => !w.name), names = found.filter((w) => w.name);
+  if (!words.length) return null; // 只当人名地名收着的词（麗、享）：词典读音本身就靠不住
+  const mine = kanjiSegs(tok.segs);
+  const want = mine.map((g) => canon(wanted.get(g) ?? kanaToRomaji(toHira(g.r || ''))));
+  const prev = tokens[ti - 1], next = tokens[ti + 1];
+  const joinedBefore = !!prev && !prev.sp && /[぀-ヿ㐀-䶿一-鿿々]$/.test(prev.s);
+  const joinedAfter = !!next && !next.sp && /^[㐀-䶿一-鿿々]/.test(next.s);
+  const same = (kana, k) => canon(kanaToRomaji(kana)) === want[k];
+  for (const loose of [false, true]) {
+    for (const w of words) {
+      const theirs = kanjiSegs(splitFurigana(w.s, w.r));
+      if (theirs.length < mine.length || mine.some((g, k) => theirs[k].t !== (g.m || g.t))) continue;
+      const got = mine.map((g, k) => {
+        const r = theirs[k].r || '';
+        if (same(r, k)) return r;
+        if (!loose || !wanted.has(g)) return null;
+        // 浊化只发生在词头那一段，促音化只发生在词尾那一段
+        return soundChanges(r, joinedBefore && k === 0 && g === tok.segs[0], joinedAfter && k === mine.length - 1 && g === tok.segs[tok.segs.length - 1]).find((v) => same(v, k)) ?? null;
+      });
+      if (got.every((r) => r !== null)) return new Map(mine.map((g, k) => [g, got[k]]));
+    }
+  }
+  for (const w of names) {
+    const theirs = kanjiSegs(splitFurigana(w.s, w.r));
+    if (theirs.length >= mine.length && mine.every((g, k) => theirs[k].t === (g.m || g.t) && same(theirs[k].r || '', k))) return 'name';
+  }
+  return false;
+}
+
+// 音读的样子：一个音（可带拗音）+ 可有可无的 う / い / ん / く / き / つ / ち
+const ON_SHAPE = /^[ぁ-ん][ゃゅょ]?(?:[うい]|ん|[くきつち])?$/;
+const NUMERAL = /^[一二三四五六七八九十百千万]+$/;
+// 词典认得这个词、却没有罗马音给的读法：罗马音还算不算数？
+function romaStillWins(tokenizer, tokens, ti, seg, romaji, asName) {
+  const tok = tokens[ti];
+  // 连假名词尾一起被词典认出来的词（抱え、遮っ、叶っ）：词典的读音可靠，罗马音是念错了
+  if (tok.segs.length !== 1 || ![...seg.t].every(isKanji)) return false;
+  // 数字：读法跟着后面的量词变（四時 よ、一口 ひと）；写成阿拉伯数字的，整个数的读音落在后面那个汉字上（2人 → ふたり）
+  const prev = tokens[ti - 1];
+  if (NUMERAL.test(seg.t) || (prev && /[0-9０-９]$/.test(prev.s))) return true;
+  if (asName) return false;
+  const kana = romajiToKana(romaji);
+  if (!kana) return false;
+  // 一头和词典读音相同、只是多了或少了一截：对齐错位，把旁边的音算进来了（空回り → こころからまわ、空 → おら）
+  const a = canon(romaji), b = canon(kanaToRomaji(toHira(seg.r || '')));
+  if (b && (a.startsWith(b) || a.endsWith(b) || b.startsWith(a) || b.endsWith(a))) return false;
+  // 照每个字各自的读音拼出来的：多个字的词是机器逐字念的（茶柱 → ちゃはしら、緑青 → みどりあお）；
+  // 单个字的，音读是机器不认识这个词时的退路（傍 → ぼう、握 → あく），训读才是词典缺的那个词（周って → まわ、失くす → な）
+  const text = seg.m || seg.t, single = [...text].length === 1;
+  if (knownKanjiReading(tokenizer, text, kana) && (!single || (ON_SHAPE.test(kana) && !isStemReading(tokenizer, text, kana)))) return false;
+  return true;
+}
+
 // 把一行歌词变成正则：假名 → 固定罗马字，汉字 → 捕获组；与歌词源的罗马音对齐后，
-// 捕获组里就是「实际唱的读音」，和词典读音不一致时以罗马音为准。
-function correctWithRomaji(tokens, roma) {
+// 捕获组里就是「实际唱的读音」，和词典读音不一致、词典又认得这个读法时以罗马音为准。
+// dict: { tokenizer, text: 分词用的那一行（和原文一样长） }
+function correctWithRomaji(tokens, roma, dict = {}) {
   const none = { n: 0, merges: [] };
   const src = normalizeSourceRomaji(roma);
   if (!src || src.length > 400) return none;
@@ -196,7 +290,7 @@ function correctWithRomaji(tokens, roma) {
     const cap = m[gi + 1];
     const cur = segs.map((s) => kanaToRomaji(toHira(s.r || ''))).join('');
     if (canon(cur) === canon(cap)) return;
-    if (segs.length === 1) { changes.push([segs[0], cap]); return; }
+    if (segs.length === 1) { changes.push([segs[0], cap, members[0].ti]); return; }
     // 相邻的多个汉字段：把读音与词典一致的首尾剥掉，只剩一个不一致时修正它
     let lo = 0, hi = segs.length - 1, rest = canon(cap);
     while (lo < hi) {
@@ -207,7 +301,7 @@ function correctWithRomaji(tokens, roma) {
       const r = canon(kanaToRomaji(toHira(segs[hi].r || '')));
       if (r && rest.endsWith(r)) { rest = rest.slice(0, -r.length); hi--; } else break;
     }
-    if (lo === hi && rest) { changes.push([segs[lo], rest]); return; }
+    if (lo === hi && rest) { changes.push([segs[lo], rest, members[lo].ti]); return; }
     // 否则（如「二人」被拆成 二+人）：整词合并成一个注音单位
     const part = members.slice(lo, hi + 1);
     const whole = part.every((x) => tokens[x.ti].segs.length === 1) && part.every((x, k) => k === 0 || x.ti === part[k - 1].ti + 1);
@@ -215,10 +309,17 @@ function correctWithRomaji(tokens, roma) {
     if (whole && kana) merges.push({ from: part[0].ti, to: part[part.length - 1].ti, r: kana });
   });
   let n = merges.length;
-  for (const [seg, romaji] of changes) {
-    const kana = romajiToKana(romaji);
+  // 同一个词里的改动放在一起问词典
+  const byTok = new Map();
+  for (const [seg, romaji, ti] of changes) { if (!byTok.has(ti)) byTok.set(ti, new Map()); byTok.get(ti).set(seg, romaji); }
+  const verdict = new Map([...byTok].map(([ti, wanted]) => [ti, dictAgrees(dict.tokenizer, dict.text, tokens, ti, wanted)]));
+  for (const [seg, romaji, ti] of changes) {
+    const ok = verdict.get(ti);
+    if ((ok === false || ok === 'name') && !romaStillWins(dict.tokenizer, tokens, ti, seg, romaji, ok === 'name')) continue;
+    const kana = ok && ok !== 'name' ? ok.get(seg) : romajiToKana(romaji);
     const kanjiCount = [...seg.t].filter(isKanji).length;
     if (!kana || kana.length > kanjiCount * 5 + 2) continue;
+    if (kana === seg.r) continue;
     if (seg.r && seg.r !== kana) seg.auto = seg.r;
     seg.r = kana;
     seg.src = 'roma';
@@ -754,7 +855,7 @@ export async function analyzeLyrics(lines, opts = {}) {
       mergeCompounds(tokens);
 
       if (line.roma) {
-        const res = correctWithRomaji(tokens, line.roma);
+        const res = correctWithRomaji(tokens, line.roma, { tokenizer, text: kata.text });
         for (const mg of res.merges.sort((a, b) => b.from - a.from)) mergeTokens(tokens, mg.from, mg.to, mg.r, 'roma');
         stats.roma += res.n;
       }

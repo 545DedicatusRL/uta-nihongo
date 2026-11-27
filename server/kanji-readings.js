@@ -26,6 +26,7 @@ function variants(r, i, n) {
 }
 
 let table = null; // Map：汉字 → Set(读音)
+let stems = null; // Set('失\tな')：从带假名词尾的词（失くす）里学到的读音，也就是训读
 function candidates(chars, i) {
   const c = chars[i] === '々' && i > 0 ? chars[i - 1] : chars[i];
   return table.get(c) || [];
@@ -70,6 +71,7 @@ function kanjiRuns(surface, reading) {
 
 function build(tokenizer) {
   table = new Map();
+  stems = new Set();
   const add = (c, r) => { if (!table.has(c)) table.set(c, new Set()); const s = table.get(c); if (s.has(r)) return false; s.add(r); return true; };
   const multi = new Map(); // '宝物\tたからもの' → [chars, reading]
   const dict = tokenizer.token_info_dictionary;
@@ -80,7 +82,7 @@ function build(tokenizer) {
       if (f[2] === '固有名詞' || !f[8] || f[8] === '*') continue;
       for (const [t, r] of kanjiRuns(f[0], toHira(f[8]))) {
         const chars = [...t];
-        if (chars.length === 1) { if (chars[0] !== '々') add(chars[0], r); } else if (chars.length <= 4) multi.set(`${t}\t${r}`, [chars, r]);
+        if (chars.length === 1) { if (chars[0] !== '々') { add(chars[0], r); if (t !== f[0]) stems.add(`${t}\t${r}`); } } else if (chars.length <= 4) multi.set(`${t}\t${r}`, [chars, r]);
       }
     }
   }
@@ -167,6 +169,19 @@ export function splitKanjiReading(tokenizer, text, reading) {
   if (!table) build(tokenizer);
   const r = toHira(reading);
   return segment(chars, r) || oneUnknown(chars, r) || evenly(chars, r);
+}
+// 这段汉字照「每个字各自已知的读音」拼不拼得出 reading（茶柱 + ちゃはしら → 拼得出；永遠 + とわ → 拼不出）。一个字的也算。
+// 读音纠正用它认出「机器按单字念出来的读音」（见 japanese.js 的罗马音纠错）
+export function knownKanjiReading(tokenizer, text, reading) {
+  const chars = [...text];
+  if (!reading || !chars.length || !chars.every((c) => KANJI.test(c))) return false;
+  if (!table) build(tokenizer);
+  return !!segment(chars, toHira(reading));
+}
+// 这个字的这个读音是不是从带假名词尾的词里学到的（失 + な ← 失くす）：是的话就是训读，不是机器按音读念出来的
+export function isStemReading(tokenizer, ch, reading) {
+  if (!table) build(tokenizer);
+  return stems.has(`${ch}\t${toHira(reading)}`);
 }
 // 建表要一秒左右：分词器准备好以后先建好，免得第一首歌多等这一秒
 export function warmKanjiReadings(tokenizer) { if (!table) build(tokenizer); }
