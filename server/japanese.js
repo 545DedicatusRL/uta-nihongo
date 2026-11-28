@@ -145,6 +145,47 @@ function splitFurigana(surface, reading) {
   return runs.map((r) => (r.type === 'K' ? { t: r.t, r: m[g++] } : { t: r.t }));
 }
 
+// ---------------- 词典补丁 ----------------
+// 分词器的词典缺的读法、标错的读音，在这里补。w：歌词里的写法（从一个词的开头算起），r：这一段的读音。
+//   def：平时就用这个读音（词典给的是错的，或者歌里几乎不那么读）。不带 def 的只是多一个候选：罗马音这样标了才用
+//   bad：词典标错的那个读音，罗马音照着它标的也不采用
+const DICT_PATCH = [
+  { w: '乱高下', r: 'らんこうげ', def: 1, bad: 'らんこうか' },
+  { w: '柔い', r: 'やわい', def: 1 }, { w: '柔く', r: 'やわく', def: 1 }, // 词典只有名词 柔（やわら）
+  { w: '見惚れ', r: 'みとれ', def: 1 },   // 词典只有 みほれ
+  { w: '居られ', r: 'いられ', def: 1 },   // 词典当成 居る（おる）的被动；居らん、居らず 不受影响
+  { w: '木洩れ', r: 'こもれ', def: 1 },   // 后面不跟 日 时被拆成 木（き）+ 洩れ
+  { w: 'その後', r: 'そのあと' },         // 词典只有 そのご
+  { w: '根本', r: 'ねもと' },             // 词典只有 こんぽん
+  { w: '日暮', r: 'ひぐらし' },           // 词典只有 ひぐれ
+];
+// 把带 def 的补丁套到分好的词上（在罗马音纠错之前，等于改了词典读音）
+function applyDictPatch(tokens, text) {
+  for (const p of DICT_PATCH) {
+    if (!p.def) continue;
+    for (let at = text.indexOf(p.w); at >= 0; at = text.indexOf(p.w, at + 1)) {
+      const end = at + p.w.length;
+      const ti = tokens.findIndex((t) => t.i0 === at);
+      if (ti < 0) continue;
+      // 补丁盖住的那几段：汉字段各占一个捕获组，假名照原样，拿去和补丁的读音对
+      const segs = [];
+      let re = '', ok = true;
+      for (let k = ti; ok && k < tokens.length && tokens[k].i0 < end; k++) {
+        let pos = tokens[k].i0;
+        for (const g of tokens[k].segs) {
+          const a = pos, b = (pos += g.t.length);
+          if (a >= end) break;
+          if (![...g.t].some(isKanji)) re += escapeRe(toHira(g.t.slice(0, end - a)));
+          else if (b > end) { ok = false; break; } // 汉字段伸到补丁外面去了：不是同一个词
+          else { segs.push(g); re += '(.+?)'; }
+        }
+      }
+      const m = ok && new RegExp(`^${re}$`).exec(p.r);
+      if (m) segs.forEach((g, k) => { g.r = m[k + 1]; });
+    }
+  }
+}
+
 // ---------------- 罗马音纠错 ----------------
 // 歌词源的罗马音多半是机器标的，会把训读的词念成音读（抱え → da e、遮って → sha tte），对齐偶尔也会错位、
 // 把旁边的音算进来。所以它给的读音要词典也认得才采用：
@@ -176,6 +217,11 @@ function dictWordsAt(tokenizer, text, at, minLen) {
       const f = dict.getFeatures(id).split(',');
       if (f[8] && f[8] !== '*') out.push({ s: hit.k, r: toHira(f[8]), name: f[2] === '固有名詞' });
     }
+  }
+  // 词典补丁：标错的去掉，缺的补上
+  for (const p of DICT_PATCH) {
+    if (p.bad) for (let k = out.length - 1; k >= 0; k--) if (out[k].s === p.w && out[k].r === p.bad) out.splice(k, 1);
+    if (p.w.length >= minLen && text.startsWith(p.w, at)) out.push({ s: p.w, r: p.r, name: false });
   }
   return out;
 }
@@ -853,6 +899,7 @@ export async function analyzeLyrics(lines, opts = {}) {
       if (kata.text !== line.text) restoreSpelling(tokens, line.text);
       mergeUnknownVerbs(tokens, raw);
       mergeCompounds(tokens);
+      applyDictPatch(tokens, kata.text);
 
       if (line.roma) {
         const res = correctWithRomaji(tokens, line.roma, { tokenizer, text: kata.text });
