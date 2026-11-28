@@ -3029,6 +3029,10 @@ function morphView(to) {
   const oldLine = toScroll ? cur : elScroll.children[a];
   let t0 = S.lines[a] && !S.lines[a].gap && oldLine ? measure(oldLine) : null;
   if (t0?.[0] && !toScroll) { const box = rect($('#lyrics')); if (t0[0].r.bottom < box.top || t0[0].r.top > box.bottom) t0 = null; } // 自己划走了、当前句不在屏幕上：这一句不飞
+  // 马上要换句了：这一句也不飞。字飞的这半秒里歌词已经换成下一句，飞着的却还是上一句，落地时对不上；
+  // 不飞的话它和别的歌词一样淡出 / 淡入，到点正常换句
+  const nextT = S.lines[a + 1]?.t;
+  if (t0 && clock.playing && nextT !== undefined && nextT - (now() - S.offset) < Math.max(0.5, MORPH.ms / 1000)) t0 = null;
   const u0 = t0?.[0] ? unitsOf(oldLine).map(at) : [];
   const y0 = t0?.[0] ? unitsOf(oldLine).map((u, k) => lineY(u, u0[k])) : [];
   const c0 = t0?.[0] ? PARTS.map((sel, k) => (k && t0[k] ? charRects($(sel, oldLine)) : null)) : [];
